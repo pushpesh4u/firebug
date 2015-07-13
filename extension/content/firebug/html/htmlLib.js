@@ -1,15 +1,18 @@
 /* See license.txt for terms of usage */
 
 define([
+    "firebug/lib/array",
     "firebug/lib/object",
     "firebug/lib/events",
     "firebug/lib/css",
     "firebug/lib/dom",
+    "firebug/lib/options",
     "firebug/lib/search",
     "firebug/lib/xml",
+    "firebug/lib/xpath",
     "firebug/lib/string",
 ],
-function(Obj, Events, Css, Dom, Search, Xml, Str) {
+function(Arr, Obj, Events, Css, Dom, Options, Search, Xml, Xpath, Str) {
 
 // ********************************************************************************************* //
 // Constants
@@ -47,6 +50,37 @@ var HTMLLib =
         walker = walker || new HTMLLib.DOMWalker(root);
         var re = new Search.ReversibleRegExp(text, "m");
         var matchCount = 0;
+        var nodeSet = new Set();
+
+        // Try also to parse the text as a CSS or XPath selector, and merge
+        // the result sets together.
+        try
+        {
+            var isXPath = (text.charAt(0) === "/");
+            function eachDoc(doc)
+            {
+                var nodes = isXPath ?
+                    Xpath.evaluateXPath(doc, text, doc, XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE) :
+                    doc.querySelectorAll(text);
+
+                for (var i = 0, len = nodes.length; i < len; ++i)
+                    nodeSet.add(nodes[i]);
+
+                var frames = doc.querySelectorAll("frame, iframe");
+                for (var i = 0, len = frames.length; i < len; ++i)
+                {
+                    var fr = frames[i];
+                    if (fr.contentDocument)
+                        eachDoc(fr.contentDocument);
+                }
+            }
+            eachDoc(root.ownerDocument || root);
+        }
+        catch (exc)
+        {
+            // Not a valid selector.
+            nodeSet = null;
+        }
 
         /**
          * Finds the first match within the document.
@@ -64,7 +98,7 @@ var HTMLLib =
                 ++matchCount;
 
                 var node = match.node;
-                var nodeBox = this.openToNode(node, match.isValue);
+                var nodeBox = this.openToNode(node, match.isValue, match.ownerElement);
 
                 this.selectMatched(nodeBox, node, match, reverse);
             }
@@ -116,7 +150,8 @@ var HTMLLib =
                 if (node.nodeType == Node.TEXT_NODE && HTMLLib.isSourceElement(node.parentNode))
                     continue;
 
-                var m = this.checkNode(node, reverse, caseSensitive);
+                var ownerElement = walker.getOwnerElement();
+                var m = this.checkNode(node, reverse, caseSensitive, 0, ownerElement);
                 if (m)
                     return m;
             }
@@ -134,13 +169,17 @@ var HTMLLib =
             {
                 var lastMatchNode = this.lastMatch.node;
                 var lastReMatch = this.lastMatch.match;
-                var m = re.exec(lastReMatch.input, reverse, lastReMatch.caseSensitive, lastReMatch);
+                var lastOwnerElement = this.lastMatch.ownerElement;
+                var m = re.exec(lastReMatch.input, reverse, lastReMatch.caseSensitive,
+                    lastReMatch);
                 if (m)
                 {
                     return {
                         node: lastMatchNode,
+                        ownerElement: lastOwnerElement,
                         isValue: this.lastMatch.isValue,
-                        match: m
+                        match: m,
+                        fullNodeMatch: false
                     };
                 }
 
@@ -148,7 +187,8 @@ var HTMLLib =
                 if (lastMatchNode.nodeType == Node.ATTRIBUTE_NODE &&
                     this.lastMatch.isValue == !!reverse)
                 {
-                    return this.checkNode(lastMatchNode, reverse, caseSensitive, 1);
+                    return this.checkNode(lastMatchNode, reverse, caseSensitive, 1,
+                        lastOwnerElement);
                 }
             }
         };
@@ -158,28 +198,55 @@ var HTMLLib =
          *
          * @private
          */
-        this.checkNode = function(node, reverse, caseSensitive, firstStep)
+        this.checkNode = function(node, reverse, caseSensitive, firstStep, ownerElement)
         {
-            var checkOrder;
-            if (node.nodeType != Node.TEXT_NODE)
+            if (nodeSet && nodeSet.has(node))
             {
-                var nameCheck = { name: "nodeName", isValue: false, caseSensitive: caseSensitive };
-                var valueCheck = { name: "nodeValue", isValue: true, caseSensitive: caseSensitive };
-                checkOrder = reverse ? [ valueCheck, nameCheck ] : [ nameCheck, valueCheck ];
+                // If a selector matches the node, that takes priority.
+                return {
+                    node: node,
+                    ownerElement: ownerElement,
+                    isValue: false,
+                    match: re.fakeMatch(node.localName, reverse, caseSensitive),
+                    fullNodeMatch: true
+                };
+            }
+
+            var checkOrder;
+            if (node.nodeType == Node.ELEMENT_NODE)
+            {
+                // For non-qualified XML names (where localName and nodeName are the same thing) we
+                // want the initial capitalization (localName); when !caseSensitive it doesn't matter.
+                var name = (!caseSensitive || node.nodeName.length > node.localName.length ?
+                    "nodeName" : "localName");
+                checkOrder = [{name: name, isValue: false}];
+            }
+            else if (node.nodeType == Node.TEXT_NODE)
+            {
+                checkOrder = [{name: "nodeValue", isValue: false}];
+            }
+            else if (node.nodeType == Node.ATTRIBUTE_NODE)
+            {
+                checkOrder = [{name: "nodeName", isValue: false}, {name: "value", isValue: true}];
+                if (reverse)
+                    checkOrder.reverse();
             }
             else
             {
-                checkOrder = [{name: "nodeValue", isValue: false, caseSensitive: caseSensitive }];
+                // Skip comment nodes etc.
+                return;
             }
 
             for (var i = firstStep || 0; i < checkOrder.length; i++)
             {
-                var m = re.exec(node[checkOrder[i].name], reverse, checkOrder[i].caseSensitive);
+                var m = re.exec(node[checkOrder[i].name], reverse, caseSensitive);
                 if (m) {
                     return {
                         node: node,
+                        ownerElement: ownerElement,
                         isValue: checkOrder[i].isValue,
-                        match: m
+                        match: m,
+                        fullNodeMatch: false
                     };
                 }
             }
@@ -190,7 +257,7 @@ var HTMLLib =
          *
          * @private
          */
-        this.openToNode = function(node, isValue)
+        this.openToNode = function(node, isValue, ownerElement)
         {
             if (node.nodeType == Node.ELEMENT_NODE)
             {
@@ -199,10 +266,10 @@ var HTMLLib =
             }
             else if (node.nodeType == Node.ATTRIBUTE_NODE)
             {
-                var nodeBox = ioBox.openToObject(node.ownerElement);
+                var nodeBox = ioBox.openToObject(ownerElement);
                 if (nodeBox)
                 {
-                    var attrNodeBox = HTMLLib.findNodeAttrBox(nodeBox, node.nodeName);
+                    var attrNodeBox = HTMLLib.findNodeAttrBox(nodeBox, node.name);
                     return Dom.getChildByClass(attrNodeBox, isValue ? "nodeValue" : "nodeName");
                 }
             }
@@ -230,16 +297,48 @@ var HTMLLib =
          */
         this.selectMatched = function(nodeBox, node, match, reverse)
         {
-            setTimeout(Obj.bindFixed(function()
+            // Force a reflow to make sure search highlighting works (issue 6952).
+            nodeBox.offsetWidth;
+
+            if (match.fullNodeMatch)
+            {
+                this.selectWholeNode(nodeBox);
+            }
+            else
             {
                 var reMatch = match.match;
                 this.selectNodeText(nodeBox, node, reMatch[0], reMatch.index, reverse,
                     reMatch.caseSensitive);
+            }
 
-                Events.dispatch([Firebug.A11yModel], "onHTMLSearchMatchFound",
-                    [panelNode.ownerPanel, match]);
-            }, this));
+            Events.dispatch([Firebug.A11yModel], "onHTMLSearchMatchFound",
+                [panelNode.ownerPanel, match]);
         };
+
+        /**
+         * Select a whole node as a search result.
+         *
+         * @private
+         */
+        this.selectWholeNode = function(nodeBox)
+        {
+            nodeBox = Dom.getAncestorByClass(nodeBox, "nodeBox");
+            var labelBox = Dom.getChildByClass(nodeBox, "nodeLabel");
+            Css.setClass(labelBox, "search-selection");
+            Dom.scrollIntoCenterView(labelBox, panelNode);
+
+            var sel = panelNode.ownerDocument.defaultView.getSelection();
+            sel.removeAllRanges();
+
+            var range = panelNode.ownerDocument.createRange();
+            var until = labelBox.getElementsByClassName("nodeBracket")[0];
+            var from = until.parentNode.firstChild;
+            range.setStartBefore(from);
+            range.setEndAfter(until);
+            sel.addRange(range);
+
+            Css.removeClass(labelBox, "search-selection");
+        },
 
         /**
          * Select text node search results.
@@ -273,6 +372,11 @@ var HTMLLib =
             if (row)
             {
                 var trueNodeBox = Dom.getAncestorByClass(nodeBox, "nodeBox");
+
+                // Temporarily add '-moz-user-select: text' to the node, so
+                // that selections show up (issue 2741).
+                // XXX(simon): This doesn't seem to be needed any more as of
+                // Fx 27, so we ought to remove it at some point.
                 Css.setClass(trueNodeBox, "search-selection");
 
                 Dom.scrollIntoCenterView(row, panelNode);
@@ -287,104 +391,6 @@ var HTMLLib =
     },
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
-
-    /**
-     * XXXjjb this code is no longer called and won't be in 1.5; if FireFinder works out we can delete this.
-     * Constructs a SelectorSearch instance.
-     *
-     * @class Class used to search a DOM tree for elements matching the given
-     *        CSS selector.
-     *
-     * @constructor
-     * @param {String} text CSS selector to search for
-     * @param {Document} doc Document to search
-     * @param {Object} panelNode Panel node containing the IO Box representing the DOM tree.
-     * @param {Object} ioBox IO Box to display the search results in
-     */
-    SelectorSearch: function(text, doc, panelNode, ioBox)
-    {
-        this.parent = new HTMLLib.NodeSearch(text, doc, panelNode, ioBox);
-
-        /**
-         * Finds the first match within the document.
-         *
-         * @param {boolean} revert true to search backward, false to search forward
-         * @param {boolean} caseSensitive true to match exact case, false to ignore case
-         * @return true if no more matches were found, but matches were found previously.
-         */
-        this.find = this.parent.find;
-
-        /**
-         * Resets the search to the beginning of the document.
-         */
-        this.reset = this.parent.reset;
-
-        /**
-         * Opens the given node in the associated IO Box.
-         *
-         * @private
-         */
-        this.openToNode = this.parent.openToNode;
-
-        try
-        {
-            // http://dev.w3.org/2006/webapi/selectors-api/
-            this.matchingNodes = doc.querySelectorAll(text);
-            this.matchIndex = 0;
-        }
-        catch(exc)
-        {
-            FBTrace.sysout("SelectorSearch FAILS "+exc, exc);
-        }
-
-        /**
-         * Finds the next match in the document.
-         *
-         * The return value is an object with the fields
-         * - node: Node that contains the match
-         * - isValue: true if the match is a match due to the value of the node, false if it is due to the name
-         * - match: Regular expression result from the match
-         *
-         * @param {boolean} revert true to search backward, false to search forward
-         * @param {boolean} caseSensitive true to match exact case, false to ignore case
-         * @return Match object if found
-         */
-        this.findNextMatch = function(reverse, caseSensitive)
-        {
-            if (!this.matchingNodes || !this.matchingNodes.length)
-                return undefined;
-
-            if (reverse)
-            {
-                if (this.matchIndex > 0)
-                    return { node: this.matchingNodes[this.matchIndex--], isValue: false, match: "?XX?"};
-                else
-                    return undefined;
-            }
-            else
-            {
-                if (this.matchIndex < this.matchingNodes.length)
-                    return { node: this.matchingNodes[this.matchIndex++], isValue: false, match: "?XX?"};
-                else
-                    return undefined;
-            }
-        };
-
-        /**
-         * Selects the search results.
-         *
-         * @private
-         */
-        this.selectMatched = function(nodeBox, node, match, reverse)
-        {
-            setTimeout(Obj.bindFixed(function()
-            {
-                ioBox.select(node, true, true);
-                Events.dispatch([Firebug.A11yModel], "onHTMLSearchMatchFound", [panelNode.ownerPanel, match]);
-            }, this));
-        };
-    },
-
 
     /**
      * Constructs a DOMWalker instance.
@@ -453,7 +459,8 @@ var HTMLLib =
                     if (!prevNode)
                         prevNode = walker[0].root;
 
-                    while ((prevNode.nodeName || "").toUpperCase() == "IFRAME")
+                    var tagName = (prevNode.nodeName || "").toUpperCase();
+                    while (["FRAME", "IFRAME"].indexOf(tagName) !== -1)
                     {
                         createWalker(prevNode.contentDocument.documentElement);
                         prevNode = getLastAncestor();
@@ -489,13 +496,15 @@ var HTMLLib =
             }
             else
             {
+                var tagName = (currentNode.nodeName || "").toUpperCase();
+
                 // First check attributes
                 var attrs = currentNode.attributes || [];
                 if (attrIndex < attrs.length)
                 {
                     attrIndex++;
                 }
-                else if ((currentNode.nodeName || "").toUpperCase() == "IFRAME")
+                else if (["FRAME", "IFRAME"].indexOf(tagName) !== -1)
                 {
                     // Attributes have completed, check for iframe contents
                     createWalker(currentNode.contentDocument.documentElement);
@@ -535,6 +544,20 @@ var HTMLLib =
         };
 
         /**
+         * Retrieves the owner element of the current node. For attribute nodes this
+         * is the same as the element that has the attribute, for anything else it is
+         * equal to the node itself. (This information was previously available from
+         * the attribute node itself, but was removed in Firefox 29.)
+         *
+         * @return The owner element of the current node, if not past the beginning
+         * or end of the iteration.
+         */
+        this.getOwnerElement = function()
+        {
+            return currentNode;
+        };
+
+        /**
          * Resets the walker position back to the initial position.
          */
         this.reset = function()
@@ -563,7 +586,7 @@ var HTMLLib =
      */
     isSourceElement: function(element)
     {
-        if (!Xml.isElementHTML(element) && !Xml.isElementXHTML(element))
+        if (!Xml.isElementHTMLOrXHTML(element))
             return false;
 
         var tag = element.localName ? element.localName.toLowerCase() : "";
@@ -639,6 +662,9 @@ var HTMLLib =
      */
     hasNoElementChildren: function(element)
     {
+        if (element === null)
+            return true;
+
         if (element.childElementCount != 0)  // FF 3.5+
             return false;
 
@@ -703,6 +729,7 @@ var HTMLLib =
     {
         if (node instanceof window.HTMLAppletElement)
             return false;
+
         return node.nodeType == window.Node.TEXT_NODE && Str.isWhitespace(node.nodeValue);
     },
 
@@ -723,7 +750,7 @@ var HTMLLib =
         // we decide not to show the whitespace in the UI.
 
         // XXXsroussey reverted above but added a check for self closing tags
-        if (Firebug.showTextNodesWithWhitespace)
+        if (Options.get("showTextNodesWithWhitespace"))
         {
             return !element.firstChild && Xml.isSelfClosing(element);
         }
@@ -749,12 +776,22 @@ var HTMLLib =
      */
     findNextSibling: function(node)
     {
-        if (Firebug.showTextNodesWithWhitespace)
-            return node.nextSibling;
+        return this.findNextNodeFrom(node.nextSibling);
+    },
+
+    /**
+     * Like findNextSibling, except it also allows returning the node itself.
+     */
+    findNextNodeFrom: function(node)
+    {
+        if (Options.get("showTextNodesWithWhitespace"))
+        {
+            return node;
+        }
         else
         {
             // only return a non-whitespace node
-            for (var child = node.nextSibling; child; child = child.nextSibling)
+            for (var child = node; child; child = child.nextSibling)
             {
                 if (!HTMLLib.isWhitespaceText(child))
                     return child;

@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Test Case for Issue #2948</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 </head>
 <body>
 
@@ -19,7 +20,7 @@
 <li>Click on the <code style="color:green">Execute Test</code> button below
 and verify that there is a XHR log in the Console.</li>
 <li>Click on the <code style="color:green">Open Popup</code> button and close the opened window.</li>
-<li>Click on the <code style="color:green">Execute Test</code> button 
+<li>Click on the <code style="color:green">Execute Test</code> button
 and again verify that there is a new XHR log.</li>
 </ol>
 
@@ -57,7 +58,7 @@ function onOpenPopup()
     {
         var event = document.createEvent("Events");
         event.initEvent("popup-loaded", true, false);
-        document.setUserData("popup-window", popup, null);
+        window.popup = popup;
         document.dispatchEvent(event)
     }, false);
 }

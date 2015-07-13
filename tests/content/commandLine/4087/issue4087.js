@@ -1,20 +1,19 @@
 function runTest()
 {
-    FBTest.sysout("issue4087.START");
     FBTest.openNewTab(basePath + "commandLine/4087/issue4087.html", function(win)
     {
-        FBTest.openFirebug();
-        FBTest.enableConsolePanel(function(win)
+        FBTest.openFirebug(function()
         {
-            FW.Firebug.chrome.selectPanel("console");
-
-            var tests = [];
-            tests.push(testCommandLine);
-            tests.push(testCommandEditor);
-
-            FBTest.runTestSuite(tests, function()
+            FBTest.enableConsolePanel(function(win)
             {
-                FBTest.testDone("issue4087; DONE");
+                var tests = [];
+                tests.push(testCommandLine);
+                tests.push(testCommandEditor);
+
+                FBTest.runTestSuite(tests, function()
+                {
+                    FBTest.testDone();
+                });
             });
         });
     });
@@ -41,7 +40,7 @@ function testCommandLine(callback)
 
 function testCommandEditor(callback)
 {
-    // Click the Command Line toggle button to switch to the Command Editor 
+    // Click the Command Line toggle button to switch to the Command Editor
     FBTest.clickToolbarButton(null, "fbToggleCommandLine");
 
     FBTest.clearAndTypeCommand("var test = 'Hello';", true);

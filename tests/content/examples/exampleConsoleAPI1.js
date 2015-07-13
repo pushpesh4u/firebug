@@ -1,9 +1,7 @@
 function runTest()
 {
-    FBTest.sysout("examples.console.START");
     FBTest.openNewTab(basePath + "examples/exampleConsoleAPI1.html", function(win)
     {
-        FBTest.openFirebug();
         FBTest.enableConsolePanel(function(win)
         {
             var config = {tagName: "div", classes: "logRow logRow-log"};
@@ -12,7 +10,7 @@ function runTest()
                 FBTest.compare(/Hello World!\s*/, row.textContent,
                     "The proper message must be displayed.");
 
-                FBTest.testDone("examples.console.DONE");
+                FBTest.testDone();
             });
 
             // Execute test implemented on the test page.

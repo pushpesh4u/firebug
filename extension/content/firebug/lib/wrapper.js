@@ -1,14 +1,17 @@
 /* See license.txt for terms of usage */
 
-define([], function() {
+define([
+],
+function() {
+
+// Note: .caller and .arguments are used for stack walking past
+// unsafeCloneFunctionIntoContentScope, so we can not use strict mode here.
+//"use strict";
 
 // ********************************************************************************************* //
 // Constants
 
-var Ci = Components.interfaces;
-var Cc = Components.classes;
 var Cu = Components.utils;
-
 var Wrapper = {};
 
 // ********************************************************************************************* //
@@ -16,126 +19,125 @@ var Wrapper = {};
 
 Wrapper.getContentView = function(object)
 {
-    if (typeof(object) === "undefined" || object == null)
-        return false;
+    if (isPrimitive(object))
+        return object;
 
-    // There is an exception when accessing StorageList.wrappedJSObject (which is
-    // instance of StorageObsolete)
-    if (object instanceof window.StorageList)
-        return false;
-
-    return (object.wrappedJSObject);
-}
+    return object.wrappedJSObject;
+};
 
 Wrapper.unwrapObject = function(object)
 {
-    // TODO: We might be able to make this check more authoritative with QueryInterface.
-    if (typeof(object) === 'undefined' || object == null)
+    if (isPrimitive(object))
         return object;
 
-    // There is an exception when accessing StorageList.wrappedJSObject (which is
-    // instance of StorageObsolete)
-    if (object instanceof window.StorageList)
+    return XPCNativeWrapper.unwrap(object);
+};
+
+Wrapper.wrapObject = function(object)
+{
+    if (isPrimitive(object))
         return object;
 
-    if (object.wrappedJSObject)
-        return object.wrappedJSObject;
+    return XPCNativeWrapper(object);
+};
 
-    return object;
-}
-
-Wrapper.unwrapIValue = function(object, viewChrome)
+Wrapper.isDeadWrapper = function(wrapper)
 {
-    var unwrapped = object.getWrappedValue();
-    if (viewChrome)
-        return unwrapped;
+    return Cu.isDeadWrapper(wrapper);
+};
 
-    try
-    {
-        // XPCSafeJSObjectWrapper is not defined in Firefox 4.0
-        // this should be the only call to getWrappedValue in firebug
-        if (typeof(XPCSafeJSObjectWrapper) != "undefined")
-        {
-            return XPCSafeJSObjectWrapper(unwrapped);
-        }
-        else if (typeof(unwrapped) == "object")
-        {
-            var result = XPCNativeWrapper.unwrap(unwrapped);
-            if (result)
-                return result;
-        }
-    }
-    catch (exc)
-    {
-        if (FBTrace.DBG_ERRORS)
-        {
-            FBTrace.sysout("unwrapIValue FAILS for " + object + " cause: " + exc,
-                {exc: exc, object: object, unwrapped: unwrapped});
-        }
-    }
-
-    return unwrapped;
-}
-
-Wrapper.unwrapIValueObject = function(scope, viewChrome)
+Wrapper.isChromeObject = function(obj, chromeWin)
 {
-    var scopeVars = {};
-    var listValue = {value: null}, lengthValue = {value: 0};
-    scope.getProperties(listValue, lengthValue);
+    var global = Cu.getGlobalForObject(obj);
+    if (!(global instanceof chromeWin.Window))
+        return true;
 
-    for (var i = 0; i < lengthValue.value; ++i)
+    if (global.document.nodePrincipal.subsumes(chromeWin.document.nodePrincipal))
+        return true;
+
+    return false;
+};
+
+/**
+ * Create a content-accessible view of a simple chrome object or function. All
+ * properties are marked as non-writable, except if they have explicit getters/setters.
+ */
+Wrapper.cloneIntoContentScope = function(global, obj)
+{
+    global = Wrapper.wrapObject(global);
+    if (typeof obj === "function")
+        return cloneFunction(global, obj);
+    if (!obj || typeof obj !== "object")
+        return obj;
+    var newObj = (Array.isArray(obj) ? new global.Array() : new global.Object());
+    newObj = XPCNativeWrapper.unwrap(newObj);
+    for (var prop in obj)
     {
-        var prop = listValue.value[i];
-        var name = Wrapper.unwrapIValue(prop.name);
+        var desc = Object.getOwnPropertyDescriptor(obj, prop);
+        if (!desc)
+            continue;
+        if ("writable" in desc)
+            desc.writable = false;
+        desc.configurable = false;
+        Object.defineProperty(newObj, prop, desc);
+    }
+    Cu.makeObjectPropsNormal(newObj);
+    return newObj;
+};
 
-        // Work around https://bugzilla.mozilla.org/show_bug.cgi?id=712289.
-        if (typeof name !== "string")
-            break;
-
-        if (prop.value.jsType === prop.value.TYPE_NULL) // null is an object (!)
-        {
-            scopeVars[name] = null;
-        }
-        else
-        {
-            if (!Wrapper.shouldIgnore(name))
-                scopeVars[name] = Wrapper.unwrapIValue(prop.value, viewChrome);
-        }
+/**
+ * Create a clone of a function usable from within a content global similarly to
+ * cloneIntoContentScope, except that it accepts even cross-origin objects
+ * as arguments. A sandbox, which must be created with:
+ * `Cu.Sandbox(win, {wantXrays: false})`, is used for the marshalling.
+ */
+Wrapper.unsafeCloneFunctionIntoContentScope = function(win, sandbox, func)
+{
+    // Delegate from the sandbox, which accepts anything, to chrome space by
+    // passing the arguments object as a single argument, which is then
+    // unwrapped. Since checking for dangerous objects only goes one level
+    // deep, this avoids problems with arguments getting denied entry.
+    // Return a bound function, so as to get "[native code]" in the function
+    // stringification.
+    function chromeForwarder(args)
+    {
+        var unwrappedArgs = XPCNativeWrapper.unwrap(args);
+        var wrappedArgs = [];
+        for (var i = 0; i < unwrappedArgs.length; i++)
+            wrappedArgs.push(XPCNativeWrapper(unwrappedArgs[i]));
+        return func.apply(null, wrappedArgs);
     }
 
-    return scopeVars;
+    var expr = "(function(x) { return function() { return x(arguments); }.bind(null); })";
+    var makeContentForwarder = Cu.evalInSandbox(expr, sandbox);
+    return makeContentForwarder(cloneFunction(win, chromeForwarder));
 };
 
 // ********************************************************************************************* //
 
-Wrapper.ignoreVars =
-{
-    "__firebug__": 1,
-    "eval": 1,
-
-    // We are forced to ignore Java-related variables, because
-    // trying to access them causes browser freeze
-    "java": 1,
-    "sun": 1,
-    "Packages": 1,
-    "JavaArray": 1,
-    "JavaMember": 1,
-    "JavaObject": 1,
-    "JavaClass": 1,
-    "JavaPackage": 1,
-    // internal firebug things XXXjjb todo we should privatize these
-    "_firebug": 1,
-    "_createFirebugConsole": 1,
-    "_FirebugCommandLine": 1,
-    "loadFirebugConsole": 1,
-};
-
+// XXX Obsolete, but left for extension compatibility.
+Wrapper.ignoreVars = {};
 Wrapper.shouldIgnore = function(name)
 {
-    return (Wrapper.ignoreVars[name] === 1);
+    return false;
 };
 
+function isPrimitive(obj)
+{
+    return !(obj && (typeof obj === "object" || typeof obj === "function"));
+}
+
+function cloneFunction(win, func)
+{
+    var obj = XPCNativeWrapper.unwrap(new win.Object());
+    var desc = {value: func, writable: true, configurable: true, enumerable: true};
+    Object.defineProperty(obj, "f", desc);
+    Cu.makeObjectPropsNormal(obj);
+    return obj.f;
+}
+
 // ********************************************************************************************* //
+// Registration
 
 return Wrapper;
 

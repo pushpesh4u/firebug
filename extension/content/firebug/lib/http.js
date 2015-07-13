@@ -4,10 +4,12 @@ define([
     "firebug/lib/xpcom",
     "firebug/lib/trace",
     "firebug/lib/deprecated",
-    "firebug/js/stackFrame",
+    "firebug/debugger/stack/stackFrame",
     "firebug/lib/string"
 ],
 function(Xpcom, FBTrace, Deprecated, StackFrame, Str) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
@@ -90,7 +92,7 @@ Http.readPostTextFromPage = function(url, context)
      }
 };
 
-Http.getResource = function(aURL)
+Http.getResource = function(aURL, ignoreMissing)
 {
     try
     {
@@ -101,7 +103,7 @@ Http.getResource = function(aURL)
     }
     catch (e)
     {
-        if (FBTrace.DBG_ERRORS)
+        if (!ignoreMissing && FBTrace.DBG_ERRORS)
             FBTrace.sysout("lib.getResource FAILS for \'"+aURL+"\'", e);
     }
 };
@@ -110,7 +112,7 @@ Http.getResource = function(aURL)
  * Returns a posted data for specified request object. The return value might contain
  * headers (if request.uploadStreamHasHeaders is set to true). You can remove these
  * headers using {@link Http.removeHeadersFromPostText}
- * 
+ *
  * @param {Object} request The request object
  * @param {Object} context Current Firebug context (to get charset of the current document)
  */
@@ -136,8 +138,8 @@ Http.readPostTextFromRequest = function(request, context)
             var charset = (context && context.window) ? context.window.document.characterSet : null;
             var text = Http.readFromStream(is, charset, true);
 
-            // Seek locks the file so, seek to the beginning only if necko hasn't read it yet,
-            // since necko doesn't seek to 0 before reading (at lest not till 459384 is fixed).
+            // Seek locks the file, so seek to the beginning only if necko hasn't read it yet,
+            // since necko doesn't seek to 0 before reading (at least not till 459384 is fixed).
             if (ss && prevOffset == 0)
                 ss.seek(NS_SEEK_SET, 0);
 
@@ -155,7 +157,7 @@ Http.readPostTextFromRequest = function(request, context)
 
 /**
  * Remove headers from post body, https://bugzilla.mozilla.org/show_bug.cgi?id=649338
- * 
+ *
  * @param {Object} request Channel implementing nsIUploadChannel2
  * @param {Object} text Extracted text (can include headers at the beginning).
  */
@@ -179,11 +181,11 @@ Http.removeHeadersFromPostText = function(request, text)
         return text;
 
     return text.substring(index + headerSeparator.length);
-}
+};
 
 /**
  * Returns an array of headers from posted data (appended by Firefox)
- * 
+ *
  * @param {Object} request Channel implementing nsIUploadChannel2
  * @param {Object} text Posted data from the channel object.
  */
@@ -223,7 +225,7 @@ Http.getHeadersFromPostText = function(request, text)
     }
 
     return headers;
-}
+};
 
 Http.getInputStreamFromString = function(dataString)
 {
@@ -290,7 +292,7 @@ Http.getRequestLoadContext = function(request)
     return null;
 };
 
-Http.getRequestWebProgress = Deprecated.deprecated("Use getRequestLoadContext function",
+Http.getRequestWebProgress = Deprecated.method("Use getRequestLoadContext function",
     Http.getRequestLoadContext);
 
 // ********************************************************************************************* //
@@ -307,7 +309,7 @@ Http.safeGetRequestName = function(request)
     }
 
     return null;
-}
+};
 
 Http.safeGetURI = function(browser)
 {
@@ -320,7 +322,7 @@ Http.safeGetURI = function(browser)
     }
 
     return null;
-}
+};
 
 Http.safeGetContentType = function(request)
 {
@@ -333,7 +335,7 @@ Http.safeGetContentType = function(request)
     }
 
     return null;
-}
+};
 
 Http.safeGetXHRResponseText = function(xhr)
 {
@@ -346,7 +348,7 @@ Http.safeGetXHRResponseText = function(xhr)
     }
 
     return null;
-}
+};
 
 // ********************************************************************************************* //
 // IP Adress and port number (Requires Gecko 5).
@@ -362,7 +364,7 @@ Http.safeGetLocalAddress = function(request)
     {
     }
     return null;
-}
+};
 
 Http.safeGetLocalPort = function(request)
 {
@@ -375,7 +377,7 @@ Http.safeGetLocalPort = function(request)
     {
     }
     return null;
-}
+};
 
 Http.safeGetRemoteAddress = function(request)
 {
@@ -388,7 +390,7 @@ Http.safeGetRemoteAddress = function(request)
     {
     }
     return null;
-}
+};
 
 Http.safeGetRemotePort = function(request)
 {
@@ -401,7 +403,7 @@ Http.safeGetRemotePort = function(request)
     {
     }
     return null;
-}
+};
 
 // ********************************************************************************************* //
 // XHR
@@ -424,18 +426,18 @@ Http.isXHR = function(request)
     }
 
     return false;
-},
+};
 
 // ********************************************************************************************* //
 // Conversions
 
-Http.convertToUnicode = Deprecated.deprecated("Function moved to 'firebug/lib/string' module",
+Http.convertToUnicode = Deprecated.method("Function moved to 'firebug/lib/string' module",
     Str.convertToUnicode);
 
-Http.convertFromUnicode = Deprecated.deprecated("Function moved to 'firebug/lib/string' module",
+Http.convertFromUnicode = Deprecated.method("Function moved to 'firebug/lib/string' module",
     Str.convertFromUnicode);
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Network Tracing
 
 Http.getStateDescription = function(flag)

@@ -3,9 +3,11 @@
 // ********************************************************************************************* //
 // Constants
 
-var Cc = Components.classes;
-var Ci = Components.interfaces;
-var Cu = Components.utils;
+const Cc = Components.classes;
+const Ci = Components.interfaces;
+const Cu = Components.utils;
+
+const DEFAULT_LOCALE = "en-US";
 
 var EXPORTED_SYMBOLS = [];
 
@@ -14,9 +16,7 @@ var EXPORTED_SYMBOLS = [];
 
 Cu.import("resource://firebug/fbtrace.js");
 Cu.import("resource://gre/modules/Services.jsm");
-Cu.import("resource://firebug/loader.js");
-
-// Import of PluralForm object.
+Cu.import("resource://firebug/prefLoader.js");
 Cu.import("resource://gre/modules/PluralForm.jsm");
 
 // ********************************************************************************************* //
@@ -61,9 +61,13 @@ var Locale = {};
  */
 Locale.$STR = function(name, bundle)
 {
+    // The empty string localizes to the empty string.
+    if (!name)
+        return "";
+
     var strKey = name.replace(" ", "_", "g");
 
-    if (!FirebugLoader.getPref("useDefaultLocale"))
+    if (!PrefLoader.getPref("useDefaultLocale"))
     {
         try
         {
@@ -75,7 +79,7 @@ Locale.$STR = function(name, bundle)
         catch (err)
         {
             if (FBTrace.DBG_LOCALE)
-                FBTrace.sysout("lib.getString FAILS '" + name + "'", err);
+                FBTrace.sysout("Locale.$STR FAILS, missing localized string for '" + name + "'", err);
         }
     }
 
@@ -88,8 +92,8 @@ Locale.$STR = function(name, bundle)
     }
     catch (err)
     {
-        if (FBTrace.DBG_LOCALE)
-            FBTrace.sysout("lib.getString (default) FAILS '" + name + "'", err);
+        if (FBTrace.DBG_LOCALE || FBTrace.DBG_ERRORS)
+            FBTrace.sysout("Locale.$STR FAILS, missing default string for '" + name + "'", err);
     }
 
     // Don't panic now and use only the label after last dot.
@@ -97,14 +101,15 @@ Locale.$STR = function(name, bundle)
     if (index > 0 && name.charAt(index-1) != "\\")
         name = name.substr(index + 1);
     name = name.replace("_", " ", "g");
+
     return name;
-}
+};
 
 Locale.$STRF = function(name, args, bundle)
 {
     var strKey = name.replace(" ", "_", "g");
 
-    if (!FirebugLoader.getPref("useDefaultLocale"))
+    if (!PrefLoader.getPref("useDefaultLocale"))
     {
         try
         {
@@ -116,7 +121,7 @@ Locale.$STRF = function(name, args, bundle)
         catch (err)
         {
             if (FBTrace.DBG_LOCALE)
-                FBTrace.sysout("lib.getString FAILS '" + name + "'", err);
+                FBTrace.sysout("Locale.$STRF FAILS, missing localized string for '" + name + "'", err);
         }
     }
 
@@ -129,8 +134,8 @@ Locale.$STRF = function(name, args, bundle)
     }
     catch (err)
     {
-        if (FBTrace.DBG_LOCALE)
-            FBTrace.sysout("lib.getString (default) FAILS '" + name + "'", err);
+        if (FBTrace.DBG_LOCALE || FBTrace.DBG_ERRORS)
+            FBTrace.sysout("Locale.$STRF FAILS, missing default string for '" + name + "'", err);
     }
 
     // Don't panic now and use only the label after last dot.
@@ -139,7 +144,7 @@ Locale.$STRF = function(name, args, bundle)
         name = name.substr(index + 1);
 
     return name;
-}
+};
 
 Locale.$STRP = function(name, args, index, bundle)
 {
@@ -167,7 +172,7 @@ Locale.$STRP = function(name, args, index, bundle)
 
     // translatedString contains no ";", either rule 0 or getString fails
     return translatedString;
-}
+};
 
 /*
  * Use the current value of the attribute as a key to look up the localized value.
@@ -190,7 +195,7 @@ Locale.internationalize = function(element, attr, args)
         if (FBTrace.DBG_LOCALE)
             FBTrace.sysout("Failed to internationalize element with attr "+attr+" args:"+args);
     }
-}
+};
 
 Locale.internationalizeElements = function(doc, elements, attributes)
 {
@@ -204,7 +209,7 @@ Locale.internationalizeElements = function(doc, elements, attributes)
         if (!element)
             continue;
 
-        // Remove fbInternational class so, the label is not translated again later.
+        // Remove fbInternational class, so that the label is not translated again later.
         element.classList.remove("fbInternational");
 
         for (var j=0; j<attributes.length; j++)
@@ -213,37 +218,32 @@ Locale.internationalizeElements = function(doc, elements, attributes)
                 Locale.internationalize(element, attributes[j]);
         }
     }
-}
+};
 
 Locale.registerStringBundle = function(bundleURI)
 {
     // Notice that this category entry must not be persistent in Fx 4.0
     categoryManager.addCategoryEntry("strings_firebug", bundleURI, "", false, true);
     this.stringBundle = null;
-}
+
+    bundleURI = getDefaultStringBundleURI(bundleURI);
+    categoryManager.addCategoryEntry("default_strings_firebug", bundleURI, "", false, true);
+    this.defaultStringBundle = null;
+};
 
 Locale.getStringBundle = function()
 {
     if (!this.stringBundle)
         this.stringBundle = stringBundleService.createExtensibleBundle("strings_firebug");
     return this.stringBundle;
-}
+};
 
 Locale.getDefaultStringBundle = function()
 {
     if (!this.defaultStringBundle)
-    {
-        var chromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].
-            getService(Ci.nsIChromeRegistry);
-
-        var uri = Services.io.newURI("chrome://firebug/locale/firebug.properties", "UTF-8", null);
-        var fileURI = chromeRegistry.convertChromeURL(uri).spec;
-        var parts = fileURI.split("/");
-        parts[parts.length - 2] = "en-US";
-        this.defaultStringBundle = stringBundleService.createBundle(parts.join("/"));
-    }
+        this.defaultStringBundle = stringBundleService.createExtensibleBundle("default_strings_firebug");
     return this.defaultStringBundle;
-}
+};
 
 Locale.getPluralRule = function()
 {
@@ -254,6 +254,94 @@ Locale.getPluralRule = function()
     catch (err)
     {
     }
+};
+
+Locale.getFormattedKey = function(win, modifiers, key, keyConstant)
+{
+    platformKeys = {};
+    platformKeys.shift = Locale.$STR("VK_SHIFT");
+    platformKeys.meta = Locale.$STR("VK_META");
+    platformKeys.alt = Locale.$STR("VK_ALT");
+    platformKeys.ctrl = Locale.$STR("VK_CONTROL");
+    platformKeys.sep = Locale.$STR("MODIFIER_SEPARATOR");
+
+    switch (Services.prefs.getIntPref("ui.key.accelKey"))
+    {
+        case win.KeyEvent.DOM_VK_CONTROL:
+            platformKeys.accel = platformKeys.ctrl;
+            break;
+        case win.KeyEvent.DOM_VK_ALT:
+            platformKeys.accel = platformKeys.alt;
+            break;
+        case win.KeyEvent.DOM_VK_META:
+            platformKeys.accel = platformKeys.meta;
+            break;
+
+        default:
+            platformKeys.accel = (win.navigator.platform.search("Mac") != -1 ? platformKeys.meta :
+                platformKeys.ctrl);
+    }
+
+    if ((modifiers == "shift,alt,control,accel" && keyConstant == "VK_SCROLL_LOCK") ||
+        (key == "" || (!key && keyConstant == "")))
+    {
+        return "";
+    }
+
+    var val = "";
+    if (modifiers)
+    {
+        val = modifiers.replace(/^[\s,]+|[\s,]+$/g, "").split(/[\s,]+/g).join(platformKeys.sep).
+            replace("alt", platformKeys.alt).replace("shift", platformKeys.shift).
+            replace("control", platformKeys.ctrl).replace("meta", platformKeys.meta).
+            replace("accel", platformKeys.accel) +
+            platformKeys.sep;
+    }
+
+    if (key)
+        return val += key;
+
+    if (keyConstant)
+    {
+        var localizedKey = Locale.$STR(keyConstant);
+
+        // Create human friendly alternative ourself, if there is no translation
+        // for the key constant
+        if (localizedKey.lastIndexOf("VK ", 0) === 0)
+            localizedKey = capitalize(localizedKey.replace("VK ", ""), true);
+
+        val += localizedKey;
+    }
+    return val;
+}
+
+// ********************************************************************************************* //
+// Helpers
+
+// This module needs to be independent of any other modules, so this is mainly a copy of
+// Str.capitalize().
+function capitalize(string)
+{
+    function capitalizeFirstLetter(string)
+    {
+        var rest = string.slice(1).toLowerCase();
+        return string.charAt(0).toUpperCase() + rest;
+    }
+
+    return string.split(" ").map(capitalizeFirstLetter).join(" ");
+}
+
+function getDefaultStringBundleURI(bundleURI)
+{
+    var chromeRegistry = Cc["@mozilla.org/chrome/chrome-registry;1"].
+        getService(Ci.nsIChromeRegistry);
+
+    var uri = Services.io.newURI(bundleURI, "UTF-8", null);
+    var fileURI = chromeRegistry.convertChromeURL(uri).spec;
+    var parts = fileURI.split("/");
+    parts[parts.length - 2] = DEFAULT_LOCALE;
+
+    return parts.join("/");
 }
 
 // ********************************************************************************************* //

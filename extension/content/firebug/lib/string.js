@@ -4,43 +4,47 @@ define([
     "firebug/lib/trace",
     "firebug/lib/options",
     "firebug/lib/deprecated",
-    "firebug/lib/xpcom"
+    "firebug/lib/xpcom",
+    "firebug/lib/system",
 ],
-function(FBTrace, Options, Deprecated, Xpcom) {
+function(FBTrace, Options, Deprecated, Xpcom, System) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
 
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-var Cu = Components.utils;
+const Ci = Components.interfaces;
+const Cc = Components.classes;
+const Cu = Components.utils;
+
+const entityConverter = Xpcom.CCSV("@mozilla.org/intl/entityconverter;1", "nsIEntityConverter");
 
 const reNotWhitespace = /[^\s]/;
 
-
 var Str = {};
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Whitespace and Entity conversions
 
 var entityConversionLists = Str.entityConversionLists =
 {
     normal : {
         whitespace : {
-            '\t' : '\u200c\u2192',
-            '\n' : '\u200c\u00b6',
-            '\r' : '\u200c\u00ac',
-            ' '  : '\u200c\u00b7'
+            "\t" : "\u200c\u2192",
+            "\n" : "\u200c\u00b6",
+            "\r" : "\u200c\u00ac",
+            " "  : "\u200c\u00b7"
         }
     },
     reverse : {
         whitespace : {
-            '&Tab;' : '\t',
-            '&NewLine;' : '\n',
-            '\u200c\u2192' : '\t',
-            '\u200c\u00b6' : '\n',
-            '\u200c\u00ac' : '\r',
-            '\u200c\u00b7' : ' '
+            "&Tab;" : "\t",
+            "&NewLine;" : "\n",
+            "\u200c\u2192" : "\t",
+            "\u200c\u00b6" : "\n",
+            "\u200c\u00ac" : "\r",
+            "\u200c\u00b7" : " "
         }
     }
 };
@@ -58,58 +62,60 @@ function addEntityMapToList(ccode, entity)
     {
         var list = lists[i];
         normal[list]=normal[list] || {};
-        normal[list][ch] = '&' + entity + ';';
+        normal[list][ch] = "&" + entity + ";";
         reverse[list]=reverse[list] || {};
-        reverse[list]['&' + entity + ';'] = ch;
+        reverse[list]["&" + entity + ";"] = ch;
     }
 }
 
 var e = addEntityMapToList,
-    white = 'whitespace',
-    text = 'text',
-    attr = 'attributes',
-    css = 'css',
-    editor = 'editor';
+    white = "whitespace",
+    text = "text",
+    attr = "attributes",
+    css = "css",
+    editor = "editor";
 
-e(0x0000, '#0', text, attr, css, editor);
-e(0x0022, 'quot', attr, css);
-e(0x0026, 'amp', attr, text, css);
-e(0x0027, 'apos', css);
-e(0x003c, 'lt', attr, text, css);
-e(0x003e, 'gt', attr, text, css);
-e(0xa9, 'copy', text, editor);
-e(0xae, 'reg', text, editor);
-e(0x2122, 'trade', text, editor);
+e(0x0000, "#0", text, attr, css, editor);
+e(0x0022, "quot", attr, css);
+e(0x0026, "amp", attr, text, css);
+e(0x0027, "apos", css);
+e(0x003c, "lt", attr, text, css);
+e(0x003e, "gt", attr, text, css);
+e(0xa9, "copy", text, editor);
+e(0xae, "reg", text, editor);
+e(0x2122, "trade", text, editor);
 
 // See http://en.wikipedia.org/wiki/Dash
-e(0x2012, '#8210', attr, text, editor); // figure dash
-e(0x2013, 'ndash', attr, text, editor); // en dash
-e(0x2014, 'mdash', attr, text, editor); // em dash
-e(0x2015, '#8213', attr, text, editor); // horizontal bar
+e(0x2012, "#8210", attr, text, editor); // figure dash
+e(0x2013, "ndash", attr, text, editor); // en dash
+e(0x2014, "mdash", attr, text, editor); // em dash
+e(0x2015, "#8213", attr, text, editor); // horizontal bar
 
 // See http://www.cs.tut.fi/~jkorpela/chars/spaces.html
-e(0x00a0, 'nbsp', attr, text, white, editor);
-e(0x2002, 'ensp', attr, text, white, editor);
-e(0x2003, 'emsp', attr, text, white, editor);
-e(0x2004, 'emsp13', attr, text, white, editor);
-e(0x2005, 'emsp14', attr, text, white, editor);
-e(0x2007, 'numsp', attr, text, white, editor);
-e(0x2008, 'puncsp', attr, text, white, editor);
-e(0x2009, 'thinsp', attr, text, white, editor);
-e(0x200a, 'hairsp', attr, text, white, editor);
-e(0x200b, '#8203', attr, text, white, editor); // zero-width space (ZWSP)
-e(0x200c, 'zwnj', attr, text, white, editor);
+e(0x00a0, "nbsp", attr, text, white, editor);
+e(0x2002, "ensp", attr, text, white, editor);
+e(0x2003, "emsp", attr, text, white, editor);
+e(0x2004, "emsp13", attr, text, white, editor);
+e(0x2005, "emsp14", attr, text, white, editor);
+e(0x2007, "numsp", attr, text, white, editor);
+e(0x2008, "puncsp", attr, text, white, editor);
+e(0x2009, "thinsp", attr, text, white, editor);
+e(0x200a, "hairsp", attr, text, white, editor);
+e(0x200b, "#8203", attr, text, white, editor); // zero-width space (ZWSP)
+e(0x200c, "zwnj", attr, text, white, editor);
 
-e(0x202f, '#8239', attr, text, white, editor); // NARROW NO-BREAK SPACE
-e(0x205f, '#8287', attr, text, white, editor); // MEDIUM MATHEMATICAL SPACE
-e(0x3000, '#12288', attr, text, white, editor); // IDEOGRAPHIC SPACE
-e(0xfeff, '#65279', attr, text, white, editor); // ZERO WIDTH NO-BREAK SPACE
+e(0x202f, "#8239", attr, text, white, editor); // NARROW NO-BREAK SPACE
+e(0x205f, "#8287", attr, text, white, editor); // MEDIUM MATHEMATICAL SPACE
+e(0x3000, "#12288", attr, text, white, editor); // IDEOGRAPHIC SPACE
+e(0xfeff, "#65279", attr, text, white, editor); // ZERO WIDTH NO-BREAK SPACE
 
-e(0x200d, 'zwj', attr, text, white, editor);
-e(0x200e, 'lrm', attr, text, white, editor);
-e(0x200f, 'rlm', attr, text, white, editor);
+e(0x200d, "zwj", attr, text, white, editor);
+e(0x200e, "lrm", attr, text, white, editor);
+e(0x200f, "rlm", attr, text, white, editor);
+e(0x202d, "#8237", attr, text, white, editor); // left-to-right override
+e(0x202e, "#8238", attr, text, white, editor); // right-to-left override
 
-//************************************************************************************************
+// ********************************************************************************************* //
 // Entity escaping
 
 var entityConversionRegexes =
@@ -123,31 +129,26 @@ var escapeEntitiesRegEx =
     normal : function(list)
     {
         var chars = [];
-        for ( var ch in list)
-        {
+        for (var ch in list)
             chars.push(ch);
-        }
-        return new RegExp('([' + chars.join('') + '])', 'gm');
+        return new RegExp("([" + chars.join("") + "])", "gm");
     },
     reverse : function(list)
     {
         var chars = [];
-        for ( var ch in list)
-        {
+        for (var ch in list)
             chars.push(ch);
-        }
-        return new RegExp('(' + chars.join('|') + ')', 'gm');
+        return new RegExp("(" + chars.join("|") + ")", "gm");
     }
 };
 
 function getEscapeRegexp(direction, lists)
 {
-    var name = '', re;
+    var name = "";
+    var re;
     var groups = [].concat(lists);
     for (i = 0; i < groups.length; i++)
-    {
         name += groups[i].group;
-    }
     re = entityConversionRegexes[direction][name];
     if (!re)
     {
@@ -188,13 +189,12 @@ function createSimpleEscape(name, direction)
                 {
                     return list[ch];
                 }
-               );
-    }
+            );
+    };
 }
 
 function escapeEntityAsName(char)
 {
-    var entityConverter = Xpcom.CCSV("@mozilla.org/intl/entityconverter;1", "nsIEntityConverter");
     try
     {
         return entityConverter.ConvertToEntity(char, entityConverter.entityW3C);
@@ -273,8 +273,9 @@ function escapeGroupsForEntities(str, lists, type)
         else
         {
             var listEntity;
-            for each (var list in lists)
+            for (var j = 0, listsLen = lists.length; j < listsLen; j++)
             {
+                var list = lists[j];
                 if (list.group != "text")
                 {
                     listEntity = entityConversionLists.normal[list.group][result];
@@ -325,7 +326,7 @@ Str.escapeGroupsForEntities = escapeGroupsForEntities;
 
 function unescapeEntities(str, lists)
 {
-    var re = getEscapeRegexp('reverse', lists),
+    var re = getEscapeRegexp("reverse", lists),
         split = String(str).split(re),
         len = split.length,
         results = [],
@@ -359,26 +360,26 @@ function unescapeEntities(str, lists)
     return results.join('') || '';
 }
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // String escaping
 
-var escapeForTextNode = Str.escapeForTextNode = createSimpleEscape('text', 'normal');
-var escapeForHtmlEditor = Str.escapeForHtmlEditor = createSimpleEscape('editor', 'normal');
-var escapeForElementAttribute = Str.escapeForElementAttribute = createSimpleEscape('attributes', 'normal');
-var escapeForCss = Str.escapeForCss = createSimpleEscape('css', 'normal');
+var escapeForTextNode = Str.escapeForTextNode = createSimpleEscape("text", "normal");
+var escapeForElementAttribute = Str.escapeForElementAttribute = createSimpleEscape("attributes", "normal");
+Str.escapeForHtmlEditor = createSimpleEscape("editor", "normal");
+Str.escapeForCss = createSimpleEscape("css", "normal");
 
 // deprecated compatibility functions
-Str.deprecateEscapeHTML = createSimpleEscape('text', 'normal');
-Str.deprecatedUnescapeHTML = createSimpleEscape('text', 'reverse');
+Str.deprecateEscapeHTML = createSimpleEscape("text", "normal");
+Str.deprecatedUnescapeHTML = createSimpleEscape("text", "reverse");
 
-Str.escapeHTML = Deprecated.deprecated("use appropriate escapeFor... function",
+Str.escapeHTML = Deprecated.method("use appropriate escapeFor... function",
     Str.deprecateEscapeHTML);
-Str.unescapeHTML = Deprecated.deprecated("use appropriate unescapeFor... function",
+Str.unescapeHTML = Deprecated.method("use appropriate unescapeFor... function",
     Str.deprecatedUnescapeHTML);
 
-var escapeForSourceLine = Str.escapeForSourceLine = createSimpleEscape('text', 'normal');
+var escapeForSourceLine = Str.escapeForSourceLine = createSimpleEscape("text", "normal");
 
-var unescapeWhitespace = createSimpleEscape('whitespace', 'reverse');
+var unescapeWhitespace = createSimpleEscape("whitespace", "reverse");
 
 Str.unescapeForTextNode = function(str)
 {
@@ -389,7 +390,7 @@ Str.unescapeForTextNode = function(str)
         str = escapeForElementAttribute(str);
 
     return str;
-}
+};
 
 Str.unescapeForURL = createSimpleEscape('text', 'reverse');
 
@@ -409,19 +410,24 @@ Str.escapeSingleQuoteJS = function(value)
                 .replace(/\n/gm, "\\n").replace("'", "\\'", "g");
 };
 
+Str.reverseString = function(value)
+{
+    return value.split("").reverse().join("");
+};
+
 Str.escapeJS = function(value)
 {
     return value.replace("\\", "\\\\", "g").replace(/\r/gm, "\\r")
         .replace(/\n/gm, "\\n").replace('"', '\\"', "g");
 };
 
-Str.cropString = function(text, limit, alterText)
+Str.cropString = function(text, limit, alternativeText)
 {
-    if (!alterText)
-        alterText = "...";
+    if (!alternativeText)
+        alternativeText = "...";
 
     // Make sure it's a string.
-    text = text + "";
+    text = String(text);
 
     // Use default limit if necessary.
     if (!limit)
@@ -431,11 +437,18 @@ Str.cropString = function(text, limit, alterText)
     if (limit <= 0)
         return text;
 
-    var halfLimit = (limit / 2);
-    halfLimit -= 2; // adjustment for alterText's increase in size
+    // Set the limit at least to the length of the alternative text
+    // plus one character of the original text.
+    if (limit <= alternativeText.length)
+        limit = alternativeText.length + 1;
+
+    var halfLimit = (limit - alternativeText.length) / 2;
 
     if (text.length > limit)
-        return text.substr(0, halfLimit) + alterText + text.substr(text.length-halfLimit);
+    {
+        return text.substr(0, Math.ceil(halfLimit)) + alternativeText +
+            text.substr(text.length - Math.floor(halfLimit));
+    }
 
     return text;
 };
@@ -446,7 +459,7 @@ Str.cropStringEx = function(text, limit, alterText, pivot)
         alterText = "...";
 
     // Make sure it's a string.
-    text = text + "";
+    text = String(text);
 
     // Use default limit if necessary.
     if (!limit)
@@ -488,17 +501,13 @@ Str.cropStringEx = function(text, limit, alterText, pivot)
 
 Str.lineBreak = function()
 {
-    if (navigator.appVersion.indexOf("Win") != -1)
-    {
-      return '\r\n';
-    }
+    if (System.isWin(window))
+        return "\r\n";
 
-    if (navigator.appVersion.indexOf("Mac") != -1)
-    {
-      return '\r';
-    }
+    if (System.isMac(window))
+        return "\r";
 
-    return '\n';
+    return "\n";
 };
 
 Str.cropMultipleLines = function(text, limit)
@@ -533,27 +542,44 @@ Str.splitLines = function(text)
 
 Str.trim = function(text)
 {
-    return text.replace(/^\s*|\s*$/g,"");
-}
+    return text.replace(/^\s*|\s*$/g, "");
+};
 
 Str.trimLeft = function(text)
 {
-    return text.replace(/^\s+/,"");
-}
+    return text.replace(/^\s+/, "");
+};
 
 Str.trimRight = function(text)
 {
-    return text.replace(/\s+$/,"");
-}
+    return text.replace(/\s+$/, "");
+};
 
 Str.hasPrefix = function(hay, needle)
 {
+    // Passing empty string is ok, but null or undefined is not.
+    if (hay == null)
+    {
+        if (FBTrace.DBG_ERRORS)
+            FBTrace.sysout("Str.hasPrefix; string must not be null", {hay: hay, needle: needle});
+
+        return false;
+    }
+
     // This is the fastest way of testing for prefixes - (hay.indexOf(needle) === 0)
     // can be O(|hay|) in the worst case, and (hay.substr(0, needle.length) === needle)
     // unnecessarily creates a new string and might be O(|needle|) in some JavaScript
     // implementations. See the discussion in issue 3071.
     return hay.lastIndexOf(needle, 0) === 0;
 };
+
+Str.endsWith = function(str, suffix)
+{
+    return str.indexOf(suffix, str.length - suffix.length) !== -1;
+};
+
+// ********************************************************************************************* //
+// HTML Wrap
 
 Str.wrapText = function(text, noEscapeHTML)
 {
@@ -593,15 +619,15 @@ Str.wrapText = function(text, noEscapeHTML)
     }
 
     return html;
-}
+};
 
 Str.insertWrappedText = function(text, textBox, noEscapeHTML)
 {
     var html = Str.wrapText(text, noEscapeHTML);
     textBox.innerHTML = "<pre role=\"list\">" + html.join("") + "</pre>";
-}
+};
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Indent
 
 const reIndent = /^(\s+)/;
@@ -627,29 +653,38 @@ Str.cleanIndentation = function(text)
             lines[i] = line.substr(minIndent);
     }
     return lines.join("");
-}
+};
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Formatting
 
-Str.formatNumber = function(number)
+//deprecated compatibility functions
+Str.deprecateEscapeHTML = createSimpleEscape("text", "normal");
+
+/**
+ * Formats a number with a fixed number of decimal places considering the locale settings
+ * @param {Integer} number Number to format
+ * @param {Integer} decimals Number of decimal places
+ * @returns {String} Formatted number
+ */
+Str.toFixedLocaleString = function(number, decimals)
 {
-    number += "";
-    var x = number.split(".");
-    var x1 = x[0];
-    var x2 = x.length > 1 ? "." + x[1] : "";
-    var rgx = /(\d+)(\d{3})/;
-    while (rgx.test(x1))
-        x1 = x1.replace(rgx, "$1" + "," + "$2");
-    return x1 + x2;
-}
+    // Check whether 'number' is a valid number
+    if (isNaN(parseFloat(number)))
+        throw new Error("Value '" + number + "' of the 'number' parameter is not a number");
+
+    return new Intl.NumberFormat(undefined,
+        {minimumFractionDigits: decimals, maximumFractionDigits: decimals}).format(number);
+};
+
+Str.formatNumber = Deprecated.method("use <number>.toLocaleString() instead",
+    function(number) { return number.toLocaleString(); });
 
 Str.formatSize = function(bytes)
 {
     var negative = (bytes < 0);
     bytes = Math.abs(bytes);
 
-    // xxxHonza, XXXjjb: Why Firebug.sizePrecision is not set in Chromebug?
     var sizePrecision = Options.get("sizePrecision");
     if (typeof(sizePrecision) == "undefined")
     {
@@ -667,42 +702,176 @@ Str.formatSize = function(bytes)
     if (sizePrecision == -1)
         result = bytes + " B";
 
-    var a = Math.pow(10, sizePrecision);
+    var precision = Math.pow(10, sizePrecision);
 
     if (bytes == -1 || bytes == undefined)
         return "?";
     else if (bytes == 0)
-        return "0";
+        return "0 B";
     else if (bytes < 1024)
-        result = bytes + " B";
-    else if (bytes < (1024*1024))
-        result = Math.round((bytes/1024)*a)/a + " KB";
+        result = bytes.toLocaleString() + " B";
+    else if (Math.round(bytes / 1024 * precision) / precision < 1024)
+        result = this.toFixedLocaleString(bytes / 1024, sizePrecision) + " KB";
     else
-        result = Math.round((bytes/(1024*1024))*a)/a + " MB";
+        result = this.toFixedLocaleString(bytes / (1024 * 1024), sizePrecision) + " MB";
 
     return negative ? "-" + result : result;
-}
+};
 
-Str.formatTime = function(elapsed)
+/**
+ * Returns a formatted time string
+ *
+ * Examples:
+ * Str.formatTime(12345678) => default formatting options => "3h 25m 45.678s"
+ * Str.formatTime(12345678, "ms") => use milliseconds as min. time unit => "3h 25m 45s 678ms"
+ * Str.formatTime(12345678, null, "m") => use minutes as max. time unit => "205m 45.678s"
+ * Str.formatTime(12345678, "m", "h") => use minutes as min. and hours as max. time unit
+ *     => "3h 25.7613m"
+ *
+ * @param {Integer} time Time to format in milliseconds
+ * @param {Integer} [minTimeUnit=1] Minimal time unit to use in the formatted string
+ *     (default is seconds)
+ * @param {Integer} [maxTimeUnit=4] Maximal time unit to use in the formatted string
+ *     (default is days)
+ * @returns {String} Formatted time string
+ */
+Str.formatTime = function(time, minTimeUnit, maxTimeUnit, decimalPlaces)
 {
-    if (elapsed == -1)
+    var time = parseInt(time);
+
+    if (isNaN(time))
         return "";
-    else if (elapsed == 0)
-        return "0";
-    else if (elapsed < 1000)
-        return elapsed + "ms";
-    else if (elapsed < 60000)
-        return (Math.round(elapsed/10) / 100) + "s";
+
+    var timeUnits = [
+        {
+            unit: "ms",
+            interval: 1000
+        },
+        {
+            unit: "s",
+            interval: 60
+        },
+        {
+            unit: "m",
+            interval: 60
+        },
+        {
+            unit: "h",
+            interval: 24
+        },
+        {
+            unit: "d",
+            interval: 1
+        },
+    ];
+
+    if (time == -1)
+    {
+        return "";
+    }
     else
     {
-        var min = Math.floor(elapsed/60000);
-        var sec = (elapsed % 60000);
-        return min + "m " + (Math.round((elapsed/1000)%60)) + "s";
-    }
-}
+        // Get the index of the min. and max. time unit and the decimal places
+        var minTimeUnitIndex = (Math.abs(time) < 1000) ? 0 : 1;
+        var maxTimeUnitIndex = timeUnits.length - 1;
 
-//********************************************************************************************* //
-//Conversions
+        for (var i=0, len=timeUnits.length; i<len; ++i)
+        {
+            if (timeUnits[i].unit == minTimeUnit)
+                minTimeUnitIndex = i;
+            if (timeUnits[i].unit == maxTimeUnit)
+                maxTimeUnitIndex = i;
+        }
+
+        if (!decimalPlaces)
+            decimalPlaces = (Math.abs(time) >= 60000 && minTimeUnitIndex == 1 ? 0 : 2);
+
+        // Calculate the maximal time interval
+        var timeUnitInterval = 1;
+        for (var i=0; i<maxTimeUnitIndex; ++i)
+            timeUnitInterval *= timeUnits[i].interval;
+
+        var formattedString = (time < 0 ? "-" : "");
+        time = Math.abs(time);
+        for (var i=maxTimeUnitIndex; i>=minTimeUnitIndex; --i)
+        {
+            var value = time / timeUnitInterval;
+            if (i != minTimeUnitIndex)
+            {
+                if (value < 0)
+                    value = Math.ceil(value);
+                else
+                    value = Math.floor(value);
+            }
+            else
+            {
+                var decimalFactor = Math.pow(10, decimalPlaces);
+                value = Math.round(value * decimalFactor) / decimalFactor;
+            }
+
+            if (value != 0 || (i == minTimeUnitIndex && formattedString == ""))
+                formattedString += value.toLocaleString() + timeUnits[i].unit + " ";
+            time %= timeUnitInterval;
+            if (i != 0)
+                timeUnitInterval /= timeUnits[i - 1].interval;
+        }
+
+        return formattedString.trim();
+    }
+};
+
+/**
+ * Formats an IPv4 or IPv6 address incl. port
+ * @param {String} address IP address to format
+ * @param {String} [port] IP port to format
+ * @returns {String} Formatted IP address
+ */
+Str.formatIP = function(address, port)
+{
+    if (!address || address == "")
+        return "";
+
+    var result = address;
+    var isIPv6Address = address.indexOf(":") != -1;
+    if (isIPv6Address)
+        result = "["+result+"]";
+
+    if (port && port != "")
+        result += ":"+port;
+
+    return result;
+};
+
+/**
+ * Capitalizes the first letter of a string or each word in it
+ *
+ * @param {String} string String to format
+ * @param {Boolean} [capitalizeEachWord=false] If true, the first character of each word will be
+ *     transformed to uppercase, otherwise only the very first character of the string
+ * @param {Boolean} [restToLowerCase=true] If true, the rest of the string will be transformed
+ *     to lower case, otherwise it will stay untouched
+ * @returns {String} Converted string
+ */
+Str.capitalize = function(string, capitalizeEachWord, restToLowerCase)
+{
+    function capitalizeFirstLetter(string)
+    {
+        var rest = string.slice(1);
+
+        if (restToLowerCase !== false)
+            rest = rest.toLowerCase();
+
+        return string.charAt(0).toUpperCase() + rest;
+    }
+
+    if (!capitalizeEachWord)
+        return capitalizeFirstLetter(string, restToLowerCase);
+
+    return string.split(" ").map(capitalizeFirstLetter).join(" ");
+};
+
+// ********************************************************************************************* //
+// Conversions
 
 Str.convertToUnicode = function(text, charset)
 {
@@ -759,24 +928,16 @@ Str.safeToString = function(ob)
     try
     {
         if (!ob)
-        {
-            if (ob == undefined)
-                return 'undefined';
-            if (ob == null)
-                return 'null';
-            if (ob == false)
-                return 'false';
-            return "";
-        }
-        if (ob && (typeof (ob['toString']) == "function") )
+            return ""+ob;
+        if (ob && (typeof (ob["toString"]) == "function") )
             return ob.toString();
-        if (ob && typeof (ob['toSource']) == 'function')
+        if (ob && typeof (ob["toSource"]) == "function")
             return ob.toSource();
        /* https://bugzilla.mozilla.org/show_bug.cgi?id=522590 */
         var str = "[";
         for (var p in ob)
-            str += p+',';
-        return str + ']';
+            str += p + ",";
+        return str + "]";
 
     }
     catch (exc)
@@ -786,6 +947,13 @@ Str.safeToString = function(ob)
     }
     return "[unsupported: no toString() function in type "+typeof(ob)+"]";
 };
+
+// ********************************************************************************************* //
+
+Str.capitalize = function(string)
+{
+    return string.charAt(0).toUpperCase() + string.slice(1);
+}
 
 // ********************************************************************************************* //
 

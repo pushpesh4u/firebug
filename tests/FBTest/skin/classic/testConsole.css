@@ -20,30 +20,28 @@ body {
 /* Toolbar buttons */
 
 #runAll {
-    list-style-image: url("chrome://fbtest/skin/runAll.png");
+    list-style-image: url("chrome://fbtest/skin/run.svg");
     -moz-image-region: rect(0px 16px 16px 0px);
 }
 
 #stopTest {
-    list-style-image: url("chrome://fbtest/skin/clear.png");
+    list-style-image: url("chrome://fbtest/skin/stop.svg");
 }
 
 #haltOnFailedTest {
-    list-style-image: url("chrome://fbtest/skin/downloadButtons-aero.png");
-    -moz-image-region: rect(0px 48px 16px 32px);
+    list-style-image: url("chrome://fbtest/skin/failHalt.svg");
 }
 
 #refreshList {
-    list-style-image: url("chrome://browser/skin/Toolbar-small.png");
-    -moz-image-region: rect(0px 64px 16px 48px);
+    list-style-image: url("chrome://fbtest/skin/refresh.svg");
 }
 
 #noTestTimeout {
-    list-style-image: url(chrome://fbtest/skin/Throbber-small.png);
+    list-style-image: url(chrome://fbtest/skin/noTimeout.svg);
 }
 
 #restartFirefox {
-    list-style-image: url("chrome://fbtest/skin/restart.png");
+    list-style-image: url("chrome://fbtest/skin/restart.svg");
 }
 
 /************************************************************************************************/
@@ -73,7 +71,8 @@ body {
     display: none;
 }
 
-#testCount {
+#testCount,
+#disabledTestCount {
     padding-top: 3px;
 }
 

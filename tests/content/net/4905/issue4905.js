@@ -1,44 +1,70 @@
 function runTest()
 {
-    FBTest.sysout("issue4905.START");
-
     FBTest.openNewTab(basePath + "net/4905/issue4905.html", function(win)
     {
-        FBTest.openFirebug();
-        FBTest.selectPanel("net");
-        FBTest.enableNetPanel();
-
-        var options =
+        FBTest.openFirebug(function()
         {
-            tagName: "tr",
-            classes: "netRow category-undefined hasHeaders loaded",
-            counter: 2
-        };
+            var diskCache = FW.Firebug.getPref("browser.cache", "disk.enable");
+            var memoryCache = FW.Firebug.getPref("browser.cache", "memory.enable");
+            FBTest.progress("disk: " + diskCache + ", memory: " + memoryCache);
 
-        FBTest.waitForDisplayedElement("net", options, function(row)
-        {
-            var panelNode = FBTest.selectPanel("net").panelNode;
+            // Enable browser cache
+            var browserCache = FW.Firebug.NetMonitor.BrowserCache;
+            var browserCacheEnabled = browserCache.isEnabled();
+            browserCache.toggle(true);
 
-            FBTest.click(row);
-            FBTest.expandElements(panelNode, "netInfoPostTab");
+            FBTest.selectPanel("net");
+            FBTest.enableNetPanel();
 
-            var cachedResponseHeadersTitle = FW.FBL.getElementByClass(panelNode,
-                "netInfoCachedResponseHeadersTitle");
-            if (FBTest.ok(cachedResponseHeadersTitle, "Cached response headers must exist"))
+            var options =
             {
-                var cachedResponseHeaders = cachedResponseHeadersTitle.nextSibling;
-                var cachedResponseHeadersBody = cachedResponseHeaders.
-                    getElementsByClassName("netInfoCachedResponseHeadersBody").item(0);
-                FBTest.ok(cachedResponseHeadersBody.children.length > 0,
-                    "There must be some cached response headers");
-                FBTest.compare(/Cache-Control/,
-                    cachedResponseHeaders.textContent,
-                    "Cached response headers must include 'Cache-Control' header");
-            }
+                tagName: "tr",
+                classes: "netRow category-undefined hasHeaders loaded fromCache",
+                counter: 2
+            };
 
-            FBTest.testDone("issue4905.DONE");
+            FBTest.waitForDisplayedElement("net", options, function()
+            {
+                var panelNode = FBTest.getSelectedPanel().panelNode;
+
+                var options =
+                {
+                    tagName: "td",
+                    classes: "netInfoParamName"
+                };
+
+                FBTest.waitForDisplayedElement("net", options, function()
+                {
+                    var rows = panelNode.querySelectorAll(
+                        ".netInfoRow.category-undefined.outerFocusRow");
+
+                    FBTest.compare(2, rows.length, "There must be two requests coming from the cache");
+
+                    for (var i=0, len=rows.length; i<len; ++i)
+                    {
+                        FBTest.expandElements(rows[i], "netInfoHeadersTab");
+
+                        var headersBody = FW.FBL.getElementByClass(rows[i],
+                            "netInfoCachedResponseHeadersBody");
+                        if (FBTest.ok(headersBody, "Cached response headers must exist"))
+                        {
+                            FBTest.compare(/Cache-Control\s*max-age=10,\s*public/,
+                                headersBody.textContent, "'Cache-Control' header must exist");
+                        }
+                    }
+
+                    // Disable browser cache again if it was disabled before
+                    if (!browserCacheEnabled)
+                        browserCache.toggle(false);
+
+                    FBTest.testDone();
+                });
+
+                FBTest.expandElements(panelNode, "netRow", "category-undefined",
+                    "hasHeaders", "loaded", "fromCache");
+            });
+
+            FBTest.reload();
         });
-
-        FBTest.reload();
     });
 }

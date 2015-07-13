@@ -4,9 +4,13 @@ define([
     "firebug/lib/trace",
     "firebug/lib/locale",
     "firebug/lib/options",
-    "firebug/lib/css"
+    "firebug/lib/css",
+    "firebug/lib/deprecated",
+    "firebug/lib/system",
 ],
-function(FBTrace, Locale, Options, Css) {
+function(FBTrace, Locale, Options, Css, Deprecated, System) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
@@ -15,25 +19,70 @@ var Menu = {};
 
 // ********************************************************************************************* //
 
-Menu.createMenu = function(popup, label)
+Menu.createMenu = function(popup, item)
 {
+    if (typeof item == "string")
+    {
+        return Deprecated.method("The function's header changed to " +
+            "createMenu(popup, item)",
+            Menu.createMenu, [popup, {label: item}])();
+    }
+
     var menu = popup.ownerDocument.createElement("menu");
-    menu.setAttribute("label", label);
-
-    var menuPopup = popup.ownerDocument.createElement("menupopup");
-
     popup.appendChild(menu);
-    menu.appendChild(menuPopup);
+
+    Menu.setItemIntoElement(menu, item);
+
+    this.createMenuPopup(menu, item);
+
+    return menu;
+};
+
+Menu.createMenuPopup = function(parent, item)
+{
+    var menuPopup = parent.ownerDocument.createElement("menupopup");
+    parent.appendChild(menuPopup);
+
+    if (item.items)
+    {
+        for (var i = 0, len = item.items.length; i < len; ++i)
+            Menu.createMenuItem(menuPopup, item.items[i]);
+    }
 
     return menuPopup;
+}
+
+// Menu.createMenuItems(popup, items[, before])
+Menu.createMenuItems = function(popup, items, before)
+{
+    for (var i=0; i<items.length; i++)
+    {
+        var item = items[i];
+
+        // Override existing items to avoid duplicates.
+        var existingItem = popup.querySelector("#" + item.id);
+        if (existingItem)
+        {
+            Menu.createMenuItem(popup, item, existingItem);
+            popup.removeChild(existingItem);
+            continue;
+        }
+
+        Menu.createMenuItem(popup, item, before);
+    }
 };
 
 Menu.createMenuItem = function(popup, item, before)
 {
-    if (typeof(item) == "string" && item.charAt(0) == "-")
-        return Menu.createMenuSeparator(popup, before);
+    if ((typeof(item) == "string" && item == "-") || item.label == "-")
+        return Menu.createMenuSeparator(popup, item, before);
 
-    var menuitem = popup.ownerDocument.createElement("menuitem");
+    var menuitem;
+
+    if (item.items)
+        menuitem = Menu.createMenu(popup, item);
+    else
+        menuitem = popup.ownerDocument.createElement("menuitem");
 
     Menu.setItemIntoElement(menuitem, item);
 
@@ -61,9 +110,6 @@ Menu.setItemIntoElement = function(element, item)
     // This allows to quickly change more options.
     if (item.type == "checkbox" && !item.closemenu)
         element.setAttribute("closemenu", "none");
-
-    if (item.checked)
-        element.setAttribute("checked", "true");
 
     if (item.disabled)
         element.setAttribute("disabled", "true");
@@ -100,8 +146,15 @@ Menu.setItemIntoElement = function(element, item)
     if (item.name)
         element.setAttribute("name", item.name);
 
+    if (item.checked)
+        element.setAttribute("checked", "true");
+
+    // Allows to perform additional custom initialization of the menu-item.
+    if (item.initialize)
+        item.initialize(element);
+
     return element;
-}
+};
 
 Menu.createMenuHeader = function(popup, item)
 {
@@ -116,22 +169,33 @@ Menu.createMenuHeader = function(popup, item)
     return header;
 };
 
-Menu.createMenuSeparator = function(popup, before)
+Menu.createMenuSeparator = function(popup, item, before)
 {
+    if (item instanceof Node)
+    {
+        return Deprecated.method("The function's header changed to "+
+            "createMenuSeparator(popup, item, before)",
+            Menu.createMenuSeparator, [popup, null, before])();
+    }
+
     if (!popup.firstChild)
         return;
 
-    var menuitem = popup.ownerDocument.createElement("menuseparator");
+    var menuItem = popup.ownerDocument.createElement("menuseparator");
+    if (typeof item == "object" && item.id)
+        menuItem.setAttribute("id", item.id);
+
     if (before)
-        popup.insertBefore(menuitem, before);
+        popup.insertBefore(menuItem, before);
     else
-        popup.appendChild(menuitem);
-    return menuitem;
+        popup.appendChild(menuItem);
+
+    return menuItem;
 };
 
 /**
  * Create an option menu item definition. This method is usually used in methods like:
- * {@link Firebug.Panel.getOptionsMenuItems} or {@link Firebug.Panel.getContextMenuItems}.
+ * {@link Panel.getOptionsMenuItems} or {@link Panel.getContextMenuItems}.
  *
  * @param {String} label Name of the string from *.properties file.
  * @param {String} option Name of the associated option.
@@ -143,13 +207,27 @@ Menu.optionMenu = function(label, option, tooltiptext)
     return {
         label: label,
         type: "checkbox",
-        checked: Firebug[option],
+        checked: Options.get(option),
         option: option,
         tooltiptext: tooltiptext,
         command: function() {
-            return Options.set(option, !Firebug[option]);
+            return Options.togglePref(option);
         }
     };
+};
+
+/**
+ * Remove unnecessary separators (at the top or at the bottom of the menu).
+ */
+Menu.optimizeSeparators = function(popup)
+{
+    while (popup.firstChild && popup.firstChild.tagName == "menuseparator")
+        popup.removeChild(popup.firstChild);
+
+    while (popup.lastChild && popup.lastChild.tagName == "menuseparator")
+        popup.removeChild(popup.lastChild);
+
+    // xxxHonza: We should also check double-separators
 };
 
 // ********************************************************************************************* //

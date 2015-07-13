@@ -1,15 +1,11 @@
 function runTest()
 {
-    FBTest.sysout("issue3400.START");
     FBTest.openNewTab(basePath + "script/3400/issue3400.html", function(win)
     {
-        FBTest.openFirebug();
         FBTest.enableScriptPanel(function(win)
         {
-            var panel = FW.Firebug.chrome.selectPanel("script");
-
             var chrome = FW.Firebug.chrome;
-            FBTest.waitForBreakInDebugger(chrome, 20, false, function(row)
+            FBTest.waitForBreakInDebugger(chrome, 21, false, function(row)
             {
                 var doc = chrome.window.document;
                 var button = doc.getElementById("fbStepOutButton");
@@ -35,7 +31,7 @@ function runTest()
 
                 // Resume debugger and finish the test.
                 FBTest.clickContinueButton();
-                FBTest.testDone("issue3400.DONE");
+                FBTest.testDone();
             });
 
             FBTest.click(win.document.getElementById("testButton"));

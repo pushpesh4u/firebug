@@ -1,6 +1,5 @@
 function runTest()
 {
-    FBTest.sysout("netInfoBodyListener.START");
     var NetInfoBody = FW.Firebug.NetMonitor.NetInfoBody;
     FBTest.openNewTab(basePath + "net/listeners/netInfoBodyListener.html", function(win)
     {
@@ -10,7 +9,7 @@ function runTest()
             win.runTest(function(request)
             {
                 var panelNode = FBTest.selectPanel("net").panelNode;
-                var netRow = FW.FBL.getElementByClass(panelNode, "netRow", "category-xhr", 
+                var netRow = FW.FBL.getElementByClass(panelNode, "netRow", "category-xhr",
                     "hasHeaders", "loaded");
 
                 // Click to open + click to close.
@@ -23,7 +22,7 @@ function runTest()
                 FBTest.ok(updateTabBody, "updateTabBody callback verified");
                 FBTest.ok(destroyTabBody, "destroyTabBody callback verified");
 
-                FBTest.testDone("netInfoBodyListener.DONE");
+                FBTest.testDone();
             });
         });
     });
@@ -33,7 +32,7 @@ var initTabBody = false;
 var updateTabBody = false;
 var destroyTabBody = false;
 
-var netInfoBodyListener = 
+var netInfoBodyListener =
 {
     initTabBody: function(infoBox, file) {
         initTabBody = true;

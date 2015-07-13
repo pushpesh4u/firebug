@@ -96,14 +96,17 @@ Firebug.InsideOutBox.prototype =
     {
         if (FBTrace.DBG_HTML)
             FBTrace.sysout("insideOutBox.select object:"+object, object);
+
         var objectBox = this.createObjectBox(object);
         this.selectObjectBox(objectBox, forceOpen);
+
         if (makeBoxVisible)
         {
             this.openObjectBox(objectBox);
             if (!noScrollIntoView)
-                Dom.scrollIntoCenterView(objectBox);
+                Dom.scrollIntoCenterView(objectBox, this.box);
         }
+
         return objectBox;
     },
 
@@ -154,7 +157,7 @@ Firebug.InsideOutBox.prototype =
             for (; highlightedBox; highlightedBox = this.getParentObjectBox(highlightedBox))
                 Css.setClass(highlightedBox, "highlightOpen");
 
-           Dom.scrollIntoCenterView(objectBox);
+            Dom.scrollIntoCenterView(objectBox, this.box);
         }
     },
 
@@ -165,16 +168,15 @@ Firebug.InsideOutBox.prototype =
         if (!panel)
         {
             if (FBTrace.DBG_ERRORS && FBTrace.DBG_HTML)
-                FBTrace.sysout("selectObjectBox no panel for "+objectBox, objectBox);
+                FBTrace.sysout("selectObjectBox no panel for " + objectBox, objectBox);
             return;
         }
-
 
         var isSelected = this.selectedObjectBox && objectBox == this.selectedObjectBox;
         if (!isSelected)
         {
             Css.removeClass(this.selectedObjectBox, "selected");
-            Events.dispatch(panel.fbListeners, 'onObjectBoxUnselected', [this.selectedObjectBox]);
+            Events.dispatch(panel.fbListeners, "onObjectBoxUnselected", [this.selectedObjectBox]);
             this.selectedObjectBox = objectBox;
 
             if (objectBox)
@@ -186,7 +188,7 @@ Firebug.InsideOutBox.prototype =
                     this.toggleObjectBox(objectBox, true);
             }
         }
-        Events.dispatch(panel.fbListeners, 'onObjectBoxSelected', [objectBox]);
+        Events.dispatch(panel.fbListeners, "onObjectBoxSelected", [objectBox]);
     },
 
     openObjectBox: function(objectBox)
@@ -199,9 +201,9 @@ Firebug.InsideOutBox.prototype =
             for (; parentBox; parentBox = this.getParentObjectBox(parentBox))
             {
                 Css.setClass(parentBox, "open");
-                labelBox = parentBox.getElementsByClassName('nodeLabelBox').item(0);
+                labelBox = parentBox.getElementsByClassName("nodeLabelBox").item(0);
                 if (labelBox)
-                    labelBox.setAttribute('aria-expanded', 'true')
+                    labelBox.setAttribute("aria-expanded", "true");
             }
         }
     },
@@ -230,21 +232,14 @@ Firebug.InsideOutBox.prototype =
             {
                 if (exceptions && child.repObject)
                 {
-                    var shouldBeExpanded = true;
                     var localName = child.repObject.localName;
-                    localName = localName ? localName.toLowerCase() : "";
+                    localName = localName && localName.toLowerCase();
 
-                    for (var i=0; i<exceptions.length; i++)
+                    if (exceptions.indexOf(localName) !== -1 &&
+                        Xml.isElementHTMLOrXHTML(child.repObject))
                     {
-                        if (localName == exceptions[i] &&
-                            (Xml.isElementHTML(child.repObject) || Xml.isElementXHTML(child.repObject)))
-                        {
-                            shouldBeExpanded = false;
-                            break;
-                        }
-                    }
-                    if (!shouldBeExpanded)
                         continue;
+                    }
                 }
 
                 if (Css.hasClass(child, "containerNodeBox"))
@@ -260,15 +255,15 @@ Firebug.InsideOutBox.prototype =
         var nodeLabel = objectBox.getElementsByClassName("nodeLabel").item(0);
         var labelBox = nodeLabel.getElementsByClassName('nodeLabelBox').item(0);
         if (labelBox)
-            labelBox.setAttribute('aria-expanded', 'false');
-
-        // Recursively contract all child boxes
-        var nodeChildBox = this.getChildObjectBox(objectBox);
-        if (!nodeChildBox)
-            return;
+            labelBox.setAttribute("aria-expanded", "false");
 
         if (contractAll)
         {
+            // Recursively contract all child boxes
+            var nodeChildBox = this.getChildObjectBox(objectBox);
+            if (!nodeChildBox)
+                return;
+
             for (var child = nodeChildBox.firstChild; child; child = child.nextSibling)
             {
                 if (Css.hasClass(child, "containerNodeBox") && Css.hasClass(child, "open"))
@@ -283,7 +278,7 @@ Firebug.InsideOutBox.prototype =
         var nodeLabel = objectBox.getElementsByClassName("nodeLabel").item(0);
         var labelBox = nodeLabel.getElementsByClassName('nodeLabelBox').item(0);
         if (labelBox)
-            labelBox.setAttribute('aria-expanded', isOpen);
+            labelBox.setAttribute("aria-expanded", isOpen);
 
         if (!forceOpen && isOpen)
             this.contractObjectBox(objectBox);
@@ -299,6 +294,13 @@ Firebug.InsideOutBox.prototype =
     getPreviousObjectBox: function(objectBox)
     {
         return Dom.findPrevious(objectBox, isVisibleTarget, true, this.box);
+    },
+
+    getNextSiblingObjectBox: function(objectBox)
+    {
+        if (!objectBox)
+            return null;
+        return Dom.findNext(objectBox, isVisibleTarget, true, objectBox.parentNode);
     },
 
     /**
@@ -523,7 +525,7 @@ Firebug.InsideOutBox.prototype =
                 if (newBox)
                 {
                     if (!nodeChildBox)
-                        FBTrace.sysout("insideOutBox FAILS no nodeChildBox "+repObject, repObject)
+                        FBTrace.sysout("insideOutBox FAILS no nodeChildBox "+repObject, repObject);
 
                     if (lastSiblingBox)
                     {

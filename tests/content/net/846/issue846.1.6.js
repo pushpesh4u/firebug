@@ -1,7 +1,5 @@
 function runTest()
 {
-    FBTest.sysout("issue846.START");
-
     FBTest.openNewTab(basePath + "net/846/Issue846.1.6.htm", function(win)
     {
         // Disable XHR spy.
@@ -19,7 +17,7 @@ function runTest()
 
             FBTest.waitForDisplayedElement("net", options, function(row)
             {
-                var responses = win.document.getUserData("responses");
+                var responses = win.wrappedJSObject.responses;
                 FBTest.sysout("issue846.onRunTest " + responses.length);
 
                 // Expand all requests and select response bodies.
@@ -43,7 +41,7 @@ function runTest()
 
                 // Finish test
                 FBTest.setPref("showXMLHttpRequests", prefOrigValue);
-                FBTest.testDone("issue846.DONE");
+                FBTest.testDone();
             });
 
             FBTest.click(win.document.getElementById("Button"));

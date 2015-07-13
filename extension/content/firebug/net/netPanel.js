@@ -10,7 +10,7 @@ define([
     "firebug/lib/events",
     "firebug/lib/options",
     "firebug/lib/url",
-    "firebug/js/sourceLink",
+    "firebug/debugger/script/sourceLink",
     "firebug/lib/http",
     "firebug/lib/css",
     "firebug/lib/dom",
@@ -22,26 +22,32 @@ define([
     "firebug/chrome/menu",
     "firebug/net/netUtils",
     "firebug/net/netProgress",
-    "firebug/js/breakpoint",
+    "firebug/css/cssReps",
+    "firebug/debugger/breakpoints/breakpointConditionEditor",
+    "firebug/net/timeInfoTip",
+    "firebug/chrome/panelNotification",
+    "firebug/chrome/activablePanel",
+    "firebug/chrome/searchBox",
     "firebug/net/xmlViewer",
     "firebug/net/svgViewer",
     "firebug/net/jsonViewer",
     "firebug/net/fontViewer",
     "firebug/chrome/infotip",
     "firebug/css/cssPanel",
-    "firebug/chrome/searchBox",
     "firebug/console/errors",
     "firebug/net/netMonitor",
-    "firebug/net/netReps"
+    "firebug/net/netReps",
+    "firebug/net/netCacheReader",
 ],
 function(Obj, Firebug, Firefox, Domplate, Xpcom, Locale,
     Events, Options, Url, SourceLink, Http, Css, Dom, Win, Search, Str,
-    Arr, System, Menu, NetUtils, NetProgress) {
-
-with (Domplate) {
+    Arr, System, Menu, NetUtils, NetProgress, CSSReps, ConditionEditor, TimeInfoTip,
+    PanelNotification, ActivablePanel, SearchBox) {
 
 // ********************************************************************************************* //
 // Constants
+
+var {domplate, DIV, TR, P, UL, A} = Domplate;
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -50,18 +56,19 @@ const Cr = Components.results;
 var layoutInterval = 300;
 var panelName = "net";
 var NetRequestEntry = Firebug.NetMonitor.NetRequestEntry;
+var NetRequestTable = Firebug.NetMonitor.NetRequestTable;
 
 // ********************************************************************************************* //
 
 /**
- * @panel Represents a Firebug panel that displayes info about HTTP activity associated with
- * the current page. This class is derived from <code>Firebug.ActivablePanel</code> in order
+ * @panel Represents a Firebug panel that displays info about HTTP activity associated with
+ * the current page. This class is derived from {@ActivablePanel} in order
  * to support activation (enable/disable). This allows to avoid (performance) expensive
  * features if the functionality is not necessary for the user.
  */
 function NetPanel() {}
-NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
-/** lends NetPanel */
+NetPanel.prototype = Obj.extend(ActivablePanel,
+/** @lends NetPanel */
 {
     name: panelName,
     searchable: true,
@@ -69,6 +76,9 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
     breakable: true,
     enableA11y: true,
     order: 60,
+
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    // Initialization
 
     initialize: function(context, doc)
     {
@@ -78,12 +88,17 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         this.queue = [];
         this.onContextMenu = Obj.bind(this.onContextMenu, this);
 
-        Firebug.ActivablePanel.initialize.apply(this, arguments);
+        ActivablePanel.initialize.apply(this, arguments);
+
+        // Listen for set filters, so the panel is properly updated when needed
+        Firebug.NetMonitor.addListener(this);
     },
 
     destroy: function(state)
     {
-        Firebug.ActivablePanel.destroy.apply(this, arguments);
+        Firebug.NetMonitor.removeListener(this);
+
+        ActivablePanel.destroy.apply(this, arguments);
     },
 
     initializeNode : function()
@@ -94,7 +109,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         this.resizeEventTarget = Firebug.chrome.$('fbContentBox');
         Events.addEventListener(this.resizeEventTarget, "resize", this.onResizer, true);
 
-        Firebug.ActivablePanel.initializeNode.apply(this, arguments);
+        ActivablePanel.initializeNode.apply(this, arguments);
     },
 
     destroyNode : function()
@@ -102,7 +117,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         Events.removeEventListener(this.panelNode, "contextmenu", this.onContextMenu, false);
         Events.removeEventListener(this.resizeEventTarget, "resize", this.onResizer, true);
 
-        Firebug.ActivablePanel.destroyNode.apply(this, arguments);
+        ActivablePanel.destroyNode.apply(this, arguments);
     },
 
     loadPersistedContent: function(state)
@@ -173,7 +188,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
     savePersistedContent: function(state)
     {
-        Firebug.ActivablePanel.savePersistedContent.apply(this, arguments);
+        ActivablePanel.savePersistedContent.apply(this, arguments);
 
         state.pageTitle = NetUtils.getPageTitle(this.context);
     },
@@ -187,15 +202,15 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         this.showToolbarButtons("fbNetButtons", enabled);
 
         if (enabled)
-            Firebug.chrome.setGlobalAttribute("cmd_togglePersistNet", "checked", this.persistContent);
+            Firebug.chrome.setGlobalAttribute("cmd_firebug_togglePersistNet", "checked", this.persistContent);
         else
             this.table = null;
 
         if (!enabled)
             return;
 
-        if (!this.filterCategory)
-            this.setFilter(Firebug.netFilterCategory);
+        if (!this.filterCategories)
+            this.setFilter(Options.get("netFilterCategories").split(" "));
 
         this.layout();
 
@@ -211,7 +226,8 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         if (FBTrace.DBG_NET)
             FBTrace.sysout("net.netPanel.hide; " + this.context.getName());
 
-        delete this.infoTipURL;  // clear the state that is tracking the infotip so it is reset after next show()
+        // clear the state that is tracking the infotip so it is reset after next show()
+        delete this.infoTipURL;
         this.wasScrolledToBottom = Dom.isScrolledToBottom(this.panelNode);
 
         clearInterval(this.layoutInterval);
@@ -220,25 +236,15 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
     updateOption: function(name, value)
     {
-        if (name == "netFilterCategory")
-        {
-            Firebug.NetMonitor.syncFilterButtons(Firebug.chrome);
-            Firebug.connection.eachContext(function syncFilters(context)
-            {
-                Firebug.NetMonitor.onToggleFilter(context, value);
-            });
-        }
-        else if (name == "netShowBFCacheResponses")
-        {
+        if (name == "netShowBFCacheResponses")
             this.updateBFCacheResponses();
-        }
     },
 
     updateBFCacheResponses: function()
     {
         if (this.table)
         {
-            if (Firebug.netShowBFCacheResponses)
+            if (Options.get("netShowBFCacheResponses"))
                 Css.setClass(this.table, "showBFCacheResponses");
             else
                 Css.removeClass(this.table, "showBFCacheResponses");
@@ -278,14 +284,14 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
     {
         var header = Dom.getAncestorByClass(target, "netHeaderRow");
         if (header)
-            return Firebug.NetMonitor.NetRequestTable;
+            return NetRequestTable;
 
-        return Firebug.ActivablePanel.getPopupObject.apply(this, arguments);
+        return ActivablePanel.getPopupObject.apply(this, arguments);
     },
 
     supportsObject: function(object, type)
     {
-        return ((object instanceof SourceLink.SourceLink && object.type == "net") ? 2 : 0);
+        return ((object instanceof SourceLink && object.type == "net") ? 2 : 0);
     },
 
     getOptionsMenuItems: function()
@@ -311,10 +317,13 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             tooltiptext: "net.option.tip.Disable_Browser_Cache",
             command: function()
             {
-                BrowserCache.toggle(!this.getAttribute("checked"));
+                BrowserCache.toggle(!this.hasAttribute("checked"));
             }
         };
     },
+
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    // Context Menu
 
     getContextMenuItems: function(nada, target)
     {
@@ -326,6 +335,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
         var object = Firebug.getObjectByURL(this.context, file.href);
         var isPost = NetUtils.isURLEncodedRequest(file, this.context);
+        var params = Url.parseURLParams(file.href);
 
         items.push(
             {
@@ -335,6 +345,18 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             }
         );
 
+        if (params.length > 0)
+        {
+            items.push(
+                {
+                    id: "fbCopyUrlParameters",
+                    label: "CopyURLParameters",
+                    tooltiptext: "net.tip.Copy_URL_Parameters",
+                    command: Obj.bindFixed(this.copyURLParams, this, file)
+                }
+            );
+        }
+
         if (isPost)
         {
             items.push(
@@ -342,6 +364,12 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
                     label: "CopyLocationParameters",
                     tooltiptext: "net.tip.Copy_Location_Parameters",
                     command: Obj.bindFixed(this.copyParams, this, file)
+                },
+                {
+                    id: "fbCopyPOSTParameters",
+                    label: "CopyPOSTParameters",
+                    tooltiptext: "net.tip.Copy_POST_Parameters",
+                    command: Obj.bindFixed(this.copyPOSTParams, this, file)
                 }
             );
         }
@@ -359,7 +387,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             }
         );
 
-        if (NetUtils.textFileCategories.hasOwnProperty(file.category))
+        if (file.categories.some((category) => category in NetUtils.textFileCategories))
         {
             items.push(
                 {
@@ -371,6 +399,15 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         }
 
         items.push(
+            {
+                id: "fbCopyAsCurl",
+                label: "CopyAsCurl",
+                tooltiptext: "net.tip.Copy_as_cURL",
+                command: Obj.bindFixed(this.copyAsCurl, this, file)
+            }
+        );
+
+        items.push(
             "-",
             {
                 label: "OpenInTab",
@@ -379,7 +416,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             }
         );
 
-        if (NetUtils.textFileCategories.hasOwnProperty(file.category))
+        if (file.categories.some((category) => category in NetUtils.textFileCategories))
         {
             items.push(
                 {
@@ -390,10 +427,11 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             );
         }
 
+        items.push("-");
+
         if (!file.loaded)
         {
             items.push(
-                "-",
                 {
                     label: "StopLoading",
                     tooltiptext: "net.tip.Stop_Loading",
@@ -402,8 +440,27 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             );
         }
 
+        items.push(
+            {
+                label: "net.label.Resend",
+                tooltiptext: "net.tip.Resend",
+                id: "fbNetResend",
+                command: Obj.bindFixed(Firebug.Spy.XHR.resend, Firebug.Spy.XHR, file, this.context)
+            }
+        );
+
         if (object)
         {
+            // xxxHonza: This is dangerous construct. Inspect menu-items are generated
+            // automatically for every context menu in FirebugChrome.onContextShowing().
+            // Also, FirebugChrome is using Rep.getRealObject() while this logic is based
+            // on Firebug.getObjectByURL(), which can return different objects to be inspected.
+            // This feature has been introduced to allow inspecting of specific network requests
+            // like stylesheets and javascript files, but at that time the network request
+            // template (FirebugReps.NetFile) returned null for getRealObject().
+            // FirebugReps.NetFile.getRealObject() now returns an object representing the request
+            // itself (used also by 'Use in Command Line' feature), which is different from what
+            // Firebug.getObjectByURL() returns. See also issue 6647.
             var subItems = Firebug.chrome.getInspectMenuItems(object);
             if (subItems.length)
             {
@@ -439,20 +496,34 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             }
         }
 
-        items.push("-");
-        items.push(
-            {
-                label: "net.label.Resend",
-                tooltiptext: "net.tip.Resend",
-                id: "fbNetResend",
-                command: Obj.bindFixed(Firebug.Spy.XHR.resend, Firebug.Spy.XHR, file, this.context)
-            }
-        );
-
         return items;
     },
 
-    // Context menu commands
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    // Context Menu Commands
+
+    copyURLParams: function(file)
+    {
+        var params = Url.parseURLParams(file.href);
+        var result = params.map(function(o) { return o.name + "=" + o.value; });
+        System.copyToClipboard(result.join(Str.lineBreak()));
+    },
+
+    copyPOSTParams: function(file)
+    {
+        if (!NetUtils.isURLEncodedRequest(file, this.context))
+            return;
+
+        var text = NetUtils.getPostText(file, this.context, true);
+        if (text)
+        {
+            var lines = text.split("\n");
+            var params = Url.parseURLEncodedText(lines[lines.length-1]);
+            var result = params.map(function(o) { return o.name + "=" + o.value; });
+            System.copyToClipboard(result.join(Str.lineBreak()));
+        }
+    },
+
     copyParams: function(file)
     {
         var text = NetUtils.getPostText(file, this.context, true);
@@ -474,6 +545,12 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
     {
         // Copy response to the clipboard
         System.copyToClipboard(NetUtils.getResponseText(file, this.context));
+    },
+
+    copyAsCurl: function(file)
+    {
+        System.copyToClipboard(NetUtils.generateCurlCommand(file,
+            Options.get("net.curlAddCompressedArgument")));
     },
 
     openRequestInTab: function(file)
@@ -512,7 +589,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
                 currFile.row.removeAttribute("breakpoint");
             else
                 currFile.row.setAttribute("breakpoint", "true");
-        })
+        });
     },
 
     stopLoading: function(file)
@@ -561,7 +638,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         return this.conditionEditor;
     },
 
-    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
     // Activable Panel
 
     /**
@@ -584,9 +661,11 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         }
     },
 
-    breakOnNext: function(breaking)
+    breakOnNext: function(breaking, callback)
     {
         this.context.breakOnXHR = breaking;
+        if (callback)
+            callback(this.context, breaking);
     },
 
     shouldBreakOnNext: function()
@@ -642,7 +721,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
                     return true;
 
                 this.infoTipURL = infoTipURL;
-                return Firebug.InfoTip.populateImageInfoTip(infoTip, row.repObject.href);
+                return CSSReps.CSSInfoTip.populateImageInfoTip(infoTip, row.repObject.href);
             }
         }
 
@@ -652,8 +731,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
     populateTimeInfoTip: function(infoTip, file)
     {
-        Firebug.NetMonitor.TimeInfoTip.render(this.context, file, infoTip);
-        return true;
+        return TimeInfoTip.render(this.context, file, infoTip);
     },
 
     populateSizeInfoTip: function(infoTip, file)
@@ -674,13 +752,13 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
     getSearchOptionsMenuItems: function()
     {
         return [
-            Firebug.Search.searchOptionMenu("search.Case_Sensitive", "searchCaseSensitive",
+            SearchBox.searchOptionMenu("search.Case_Sensitive", "searchCaseSensitive",
                 "search.tip.Case_Sensitive"),
-            //Firebug.Search.searchOptionMenu("search.net.Headers", "netSearchHeaders"),
-            //Firebug.Search.searchOptionMenu("search.net.Parameters", "netSearchParameters"),
-            Firebug.Search.searchOptionMenu("search.Use_Regular_Expression",
+            //SearchBox.searchOptionMenu("search.net.Headers", "netSearchHeaders"),
+            //SearchBox.searchOptionMenu("search.net.Parameters", "netSearchParameters"),
+            SearchBox.searchOptionMenu("search.Use_Regular_Expression",
                 "searchUseRegularExpression", "search.tip.Use_Regular_Expression"),
-            Firebug.Search.searchOptionMenu("search.net.Response_Bodies", "netSearchResponseBody",
+            SearchBox.searchOptionMenu("search.net.Response_Bodies", "netSearchResponseBody",
                 "search.net.tip.Response_Bodies")
         ];
     },
@@ -697,12 +775,12 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         var row;
         if (this.currentSearch && text == this.currentSearch.text)
         {
-            row = this.currentSearch.findNext(true, false, reverse, Firebug.Search.isCaseSensitive(text));
+            row = this.currentSearch.findNext(true, false, reverse, SearchBox.isCaseSensitive(text));
         }
         else
         {
             this.currentSearch = new NetPanelSearch(this);
-            row = this.currentSearch.find(text, reverse, Firebug.Search.isCaseSensitive(text));
+            row = this.currentSearch.find(text, reverse, SearchBox.isCaseSensitive(text));
         }
 
         if (row)
@@ -715,7 +793,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             if(this.currentSearch.shouldSearchResponses() &&
                 Dom.getAncestorByClass(row, "netInfoResponseText"))
             {
-                this.highlightNode(row)
+                this.highlightNode(row);
             }
             else
             {
@@ -729,6 +807,14 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             Events.dispatch(this.fbListeners, 'onNetMatchFound', [this, text, null]);
             return false;
         }
+    },
+
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
+    onFiltersSet: function(filterCategories)
+    {
+        this.setFilter(filterCategories);
+        this.updateSummaries(NetUtils.now(), true);
     },
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
@@ -786,18 +872,28 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
     {
         if (!this.table)
         {
-            var limitInfo = {
+            var prefName = Options.prefDomain + ".net.logLimit";
+            var config = {
                 totalCount: 0,
-                limitPrefsTitle: Locale.$STRF("LimitPrefsTitle",
-                    [Options.prefDomain+".net.logLimit"])
+                prefName: prefName,
+                buttonTooltip: Locale.$STRF("LimitPrefsTitle", [prefName])
             };
 
-            this.table = Firebug.NetMonitor.NetRequestTable.tableTag.append({}, this.panelNode);
-            var tbody = this.table.querySelector(".netTableBody");
-            this.limitRow = Firebug.NetMonitor.NetLimit.createRow(tbody, limitInfo);
-            this.summaryRow = NetRequestEntry.summaryTag.insertRows({}, this.table.lastChild.lastChild)[0];
+            // Render notification box
+            var limitBox = NetRequestTable.limitTag.append({}, this.panelNode);
+            this.limitRow = PanelNotification.render(limitBox, config);
 
-            NetRequestEntry.footerTag.insertRows({}, this.summaryRow);
+            // Render basic Net panel table (a row == one HTTP request)
+            this.table = NetRequestTable.tableTag.append({}, this.panelNode);
+            var tbody = this.table.querySelector(".netTableBody");
+
+            // xxxHonza: Fake first row (shold be renamed, but it's a hack anyway).
+            // There is no way to insert a row befor the current first row in a table.
+            // See Domplate.insertRows() comment for more details.
+            NetRequestEntry.footerTag.insertRows({}, tbody);
+
+            // Render summary row
+            this.summaryRow = NetRequestEntry.summaryTag.insertRows({}, tbody)[0];
 
             // Update visibility of columns according to the preferences
             var hiddenCols = Options.get("net.hiddenColumns");
@@ -863,8 +959,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
             // Allow customization of request entries in the list. A row is represented
             // by <TR> HTML element.
-            Events.dispatch(Firebug.NetMonitor.NetRequestTable.fbListeners,
-                "onCreateRequestEntry", [this, row]);
+            Events.dispatch(NetRequestTable.fbListeners, "onCreateRequestEntry", [this, row]);
 
             row = row.nextSibling;
         }
@@ -911,18 +1006,19 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
             if (file.mimeType)
             {
-                // Force update category.
-                file.category = null;
+                // Force update categories
+                file.categories = null;
                 for (var category in NetUtils.fileCategories)
-                    Css.removeClass(row, "category-" + category);
-                Css.setClass(row, "category-" + NetUtils.getFileCategory(file));
+                    row.classList.remove("category-" + category);
+                var categories = NetUtils.getFileCategories(file);
+                categories.forEach((category) => row.classList.add("category-" + category));
             }
 
             var remoteIPLabel = row.querySelector(".netRemoteAddressCol .netAddressLabel");
-            remoteIPLabel.innerHTML = NetRequestEntry.getRemoteAddress(file);
+            remoteIPLabel.textContent = NetRequestEntry.getRemoteAddress(file);
 
             var localIPLabel = row.querySelector(".netLocalAddressCol .netAddressLabel");
-            localIPLabel.innerHTML = NetRequestEntry.getLocalAddress(file);
+            localIPLabel.textContent = NetRequestEntry.getLocalAddress(file);
 
             if (file.requestHeaders)
                 Css.setClass(row, "hasHeaders");
@@ -944,7 +1040,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
             var netBar = Dom.getChildByClass(row, "netTimeCol").childNodes[1];
             var timeLabel = Dom.getChildByClass(netBar, "netReceivingBar").firstChild;
-            timeLabel.innerHTML = NetRequestEntry.getElapsedTime({elapsed: this.elapsed});
+            timeLabel.textContent = NetRequestEntry.getElapsedTime({elapsed: this.elapsed});
 
             if (file.loaded)
                 Css.setClass(row, "loaded");
@@ -1117,7 +1213,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             fileCount += summary.fileCount;
             totalSize += summary.totalSize;
             cachedSize += summary.cachedSize;
-            totalTime += summary.totalTime
+            totalTime += summary.totalTime;
         }
 
         var row = this.summaryRow;
@@ -1125,16 +1221,16 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             return;
 
         var countLabel = row.getElementsByClassName("netCountLabel").item(0); //childNodes[1].firstChild;
-        countLabel.firstChild.nodeValue = Locale.$STRP("plural.Request_Count2", [fileCount]);
+        countLabel.textContent = Locale.$STRP("plural.Request_Count2", [fileCount]);
 
         var sizeLabel = row.getElementsByClassName("netTotalSizeLabel").item(0); //childNodes[4].firstChild;
         sizeLabel.setAttribute("totalSize", totalSize);
-        sizeLabel.firstChild.nodeValue = NetRequestEntry.formatSize(totalSize);
+        sizeLabel.textContent = NetRequestEntry.formatSize(totalSize);
 
         var cacheSizeLabel = row.getElementsByClassName("netCacheSizeLabel").item(0);
         cacheSizeLabel.setAttribute("collapsed", cachedSize == 0);
-        cacheSizeLabel.childNodes[1].firstChild.nodeValue =
-            NetRequestEntry.formatSize(cachedSize);
+        cacheSizeLabel.textContent = "(" + Locale.$STRF("net.summary.from_cache",
+            [NetRequestEntry.formatSize(cachedSize)]) + ")";
 
         var timeLabel = row.getElementsByClassName("netTotalTimeLabel").item(0);
         var timeText = NetRequestEntry.formatTime(totalTime);
@@ -1145,29 +1241,30 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
             timeText += " (onload: " + NetRequestEntry.formatTime(loadTime) + ")";
         }
 
-        timeLabel.innerHTML = timeText;
+        timeLabel.textContent = timeText;
     },
 
     summarizePhase: function(phase, rightNow)
     {
         var cachedSize = 0, totalSize = 0;
 
-        var category = Firebug.netFilterCategory;
-        if (category == "all")
-            category = null;
+        var categories = this.filterCategories;
+        if (categories == "all")
+            categories = null;
 
         var fileCount = 0;
         var minTime = 0, maxTime = 0;
 
-        for (var i=0; i<phase.files.length; i++)
+        for (var i = 0; i < phase.files.length; i++)
         {
             var file = phase.files[i];
 
             // Do not count BFCache responses if the user says so.
-            if (!Firebug.netShowBFCacheResponses && file.fromBFCache)
+            if (!Options.get("netShowBFCacheResponses") && file.fromBFCache)
                 continue;
 
-            if (!category || file.category == category)
+            if (!categories || (file.categories && file.categories.some((category) =>
+                categories.indexOf(category) !== -1)))
             {
                 if (file.loaded)
                 {
@@ -1190,7 +1287,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
         var totalTime = maxTime - minTime;
         return {cachedSize: cachedSize, totalSize: totalSize, totalTime: totalTime,
-                fileCount: fileCount}
+                fileCount: fileCount};
     },
 
     updateLogLimit: function(limit)
@@ -1253,9 +1350,9 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         if (noInfo || !this.limitRow)
             return;
 
-        this.limitRow.limitInfo.totalCount++;
+        this.limitRow.config.totalCount++;
 
-        Firebug.NetMonitor.NetLimit.updateCounter(this.limitRow);
+        PanelNotification.updateCounter(this.limitRow);
 
         //if (netProgress.currentPhase == file.phase)
         //  netProgress.currentPhase = null;
@@ -1302,17 +1399,16 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         // Make sure the basic structure of the table panel is there.
         this.initLayout();
 
-        // Get the last request row before summary row.
-        var lastRow = this.summaryRow.previousSibling;
-
-        // Insert an activation message (if the last row isn't the message already);
-        if (Css.hasClass(lastRow, "netActivationRow"))
+        // Bail out if the activation message is already there.
+        if (this.table.querySelector(".netActivationRow"))
             return;
 
-        var message = NetRequestEntry.activationTag.insertRows({}, lastRow)[0];
+        // Insert activation message
+        var lastRow = this.summaryRow.previousSibling;
+        NetRequestEntry.activationTag.insertRows({}, lastRow)[0];
 
         if (FBTrace.DBG_NET)
-            FBTrace.sysout("net.insertActivationMessage; " + this.context.getName(), message);
+            FBTrace.sysout("net.insertActivationMessage; " + this.context.getName());
     },
 
     enumerateRequests: function(fn)
@@ -1345,17 +1441,24 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
         }
     },
 
-    setFilter: function(filterCategory)
+    setFilter: function(filterCategories)
     {
-        this.filterCategory = filterCategory;
+        this.filterCategories = filterCategories;
 
         var panelNode = this.panelNode;
+        var filtering = filterCategories.join(" ") !== "all";
+
+        if (filtering)
+            panelNode.classList.add("filtering");
+        else
+            panelNode.classList.remove("filtering");
+
         for (var category in NetUtils.fileCategories)
         {
-            if (filterCategory != "all" && category != filterCategory)
-                Css.setClass(panelNode, "hideCategory-"+category);
+            if (filtering && filterCategories.indexOf(category) !== -1)
+                panelNode.classList.add("showCategory-" + category);
             else
-                Css.removeClass(panelNode, "hideCategory-"+category);
+                panelNode.classList.remove("showCategory-" + category);
         }
     },
 
@@ -1405,8 +1508,6 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
         var maxWidth = netHrefCol.clientWidth;
 
-        // This call must precede all getCSSStyleRules calls  FIXME not needed after 3.6
-        Firebug.CSSModule.cleanupSheets(hrefLabel.ownerDocument, this.context);
         var rules = Dom.domUtils.getCSSStyleRules(hrefLabel);
         for (var i = 0; i < rules.Count(); ++i)
         {
@@ -1427,7 +1528,7 @@ NetPanel.prototype = Obj.extend(Firebug.ActivablePanel,
 
 // ********************************************************************************************* //
 
-/*
+/**
  * Use this object to automatically select Net panel and inspect a network request.
  * Firebug.chrome.select(new Firebug.NetMonitor.NetFileLink(url [, request]));
  */
@@ -1435,7 +1536,7 @@ Firebug.NetMonitor.NetFileLink = function(href, request)
 {
     this.href = href;
     this.request = request;
-}
+};
 
 Firebug.NetMonitor.NetFileLink.prototype =
 {
@@ -1524,7 +1625,7 @@ var NetPanelSearch = function(panel, rowFinder)
         if (!file)
             return;
 
-        var scanRE = Firebug.Search.getTestingRegex(this.text);
+        var scanRE = SearchBox.getTestingRegex(this.text);
         if (scanRE.test(file.responseText))
         {
             if (!Css.hasClass(this.currentRow, "opened"))
@@ -1535,9 +1636,10 @@ var NetPanelSearch = function(panel, rowFinder)
             Firebug.NetMonitor.NetInfoBody.selectTabByName(netInfoBox, "Response");
 
             // Before the search is started, the new content must be properly
-            // layouted within the page. The layout is executed by reading
+            // re-layouted within the page. The layout is executed by reading
             // the following property.
-            // xxxHonza: This workaround can be removed as soon as #488427 is fixed.
+            // xxxHonza: Force layout to be executed (workaround)
+            // This workaround can be removed as soon as #488427 is fixed.
             doc.body.offsetWidth;
         }
     },
@@ -1550,13 +1652,13 @@ var NetPanelSearch = function(panel, rowFinder)
         searchRange.setEnd(this.currentRow, this.currentRow.childNodes.length);
 
         startPt = searchRange;
-    }
+    };
 
     this.getFirstRow = function()
     {
         var table = panelNode.getElementsByClassName("netTable").item(0);
         return table.querySelector(".netTableBody").firstChild;
-    }
+    };
 
     this.getNextRow = function(wrapAround, reverse)
     {
@@ -1570,22 +1672,22 @@ var NetPanelSearch = function(panel, rowFinder)
         }
 
         return wrapAround ? this.getFirstRow() : null;
-    }
+    };
 
     this.shouldSearchResponses = function()
     {
         return Firebug["netSearchResponseBody"];
-    }
+    };
 };
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// ********************************************************************************************* //
 
 Firebug.NetMonitor.ConditionEditor = function(doc)
 {
-    Firebug.Breakpoint.ConditionEditor.apply(this, arguments);
-}
+    ConditionEditor.apply(this, arguments);
+};
 
-Firebug.NetMonitor.ConditionEditor.prototype = domplate(Firebug.Breakpoint.ConditionEditor.prototype,
+Firebug.NetMonitor.ConditionEditor.prototype = domplate(ConditionEditor.prototype,
 {
     endEditing: function(target, value, cancel)
     {
@@ -1622,7 +1724,7 @@ Firebug.NetMonitor.BrowserCache =
         Options.setPref(this.cacheDomain, "disk.enable", state);
         Options.setPref(this.cacheDomain, "memory.enable", state);
     }
-}
+};
 
 // ********************************************************************************************* //
 // Registration
@@ -1632,4 +1734,4 @@ Firebug.registerPanel(NetPanel);
 return Firebug.NetMonitor;
 
 // ********************************************************************************************* //
-}});
+});

@@ -1,21 +1,21 @@
 function runTest()
 {
-    FBTest.sysout("issue369.jsonViewer.START");
-
     FBTest.openNewTab(basePath + "net/369/issue369.htm", function(win)
     {
-        FBTest.openFirebug();
-        FBTest.enableNetPanel(function(win)
+        FBTest.openFirebug(function()
         {
-            var panel = FBTest.selectPanel("net");
+            FBTest.enableNetPanel(function(win)
+            {
+                var panel = FBTest.selectPanel("net");
 
-            win.makeRequest1(onRequest);
-            win.makeRequest2(onRequest);
-            win.makeRequest3(onRequest);
-            win.makeRequest4(onRequest);
-            // xxxHonza: Not implemented yet.
-            //win.makeRequest5(onRequest);
-            //win.makeRequest6(onRequest);
+                win.makeRequest1(onRequest);
+                win.makeRequest2(onRequest);
+                win.makeRequest3(onRequest);
+                win.makeRequest4(onRequest);
+                // xxxHonza: Not implemented yet.
+                //win.makeRequest5(onRequest);
+                //win.makeRequest6(onRequest);
+            });
         });
     });
 }
@@ -34,7 +34,7 @@ function verifyContent()
     var tabs = FBTest.expandElements(panelNode, "netInfoJSONTab");
 
     FBTest.ok(rows.length == 4, "There must be 4 requests in the Net panel.");
-    FBTest.ok(tabs.length == 4, "There must be 4 JSON tabs in the net panel."); 
+    FBTest.ok(tabs.length == 4, "There must be 4 JSON tabs in the net panel.");
 
     if (rows.length != 4 || tabs.length != 4)
         return FBTest.testDone();
@@ -52,7 +52,7 @@ function verifyContent()
         FBTest.ok(textContent, domTable.textContent, "JSON data must be properly displayed.");
     }
 
-    FBTest.testDone("issue369.jsonViewer.DONE");
+    FBTest.testDone();
 }
 
 // ************************************************************************************************
@@ -69,25 +69,25 @@ var textContent = "addressObject streetAddress=21 2nd Street city=New York state
 function requestHandler1(metadata, response) {
     response.setHeader("Content-Type", "application/json", false);
     response.write(jsonString);
-} 
+}
 
 // JSON response #2
 function requestHandler2(metadata, response) {
     response.setHeader("Content-Type", "application/json", false);
     response.write("somefunc(" + jsonString + ")");
-} 
+}
 
 // JSON response #3
 function requestHandler3(metadata, response) {
     response.setHeader("Content-Type", "application/json", false);
     response.write("/*-secure-\n" + jsonString + "\n*/");
-} 
+}
 
 // JSON response #4
 function requestHandler4(metadata, response) {
     response.setHeader("Content-Type", "application/json", false);
     response.write("while (true); &&&START&&& " + jsonString + " &&&END&&&");
-} 
+}
 
 // JSON response #5
 function requestHandler5(metadata, response) {

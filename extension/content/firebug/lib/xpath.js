@@ -5,12 +5,10 @@ define([
 ],
 function(Str) {
 
+"use strict";
+
 // ********************************************************************************************* //
 // Constants
-
-var Ci = Components.interfaces;
-var Cc = Components.classes;
-var Cu = Components.utils;
 
 var Xpath = {};
 
@@ -33,9 +31,10 @@ Xpath.getElementTreeXPath = function(element)
     var paths = [];
 
     // Use nodeName (instead of localName) so namespace prefix is included (if any).
-    for (; element && element.nodeType == 1; element = element.parentNode)
+    for (; element && element.nodeType == Node.ELEMENT_NODE; element = element.parentNode)
     {
         var index = 0;
+        var hasFollowingSiblings = false;
         for (var sibling = element.previousSibling; sibling; sibling = sibling.previousSibling)
         {
             // Ignore document type declaration.
@@ -46,8 +45,15 @@ Xpath.getElementTreeXPath = function(element)
                 ++index;
         }
 
-        var tagName = element.nodeName.toLowerCase();
-        var pathIndex = (index ? "[" + (index+1) + "]" : "");
+        for (var sibling = element.nextSibling; sibling && !hasFollowingSiblings;
+            sibling = sibling.nextSibling)
+        {
+            if (sibling.nodeName == element.nodeName)
+                hasFollowingSiblings = true;
+        }
+
+        var tagName = (element.prefix ? element.prefix + ":" : "") + element.localName;
+        var pathIndex = (index || hasFollowingSiblings ? "[" + (index + 1) + "]" : "");
         paths.splice(0, 0, tagName + pathIndex);
     }
 
@@ -162,20 +168,75 @@ Xpath.getElementsBySelector = function(doc, css)
 
 Xpath.getElementsByXPath = function(doc, xpath)
 {
-    var nodes = [];
-
-    try {
-        var result = doc.evaluate(xpath, doc, null, XPathResult.ANY_TYPE, null);
-        for (var item = result.iterateNext(); item; item = result.iterateNext())
-            nodes.push(item);
-    }
-    catch (exc)
+    try
     {
-        // Invalid xpath expressions make their way here sometimes.  If that happens,
-        // we still want to return an empty set without an exception.
+        return Xpath.evaluateXPath(doc, xpath);
     }
+    catch(ex)
+    {
+        return [];
+    }
+};
 
-    return nodes;
+/**
+ * Evaluates an XPath expression.
+ *
+ * @param {Document} doc
+ * @param {String} xpath The XPath expression.
+ * @param {Node} contextNode The context node.
+ * @param {int} resultType
+ *
+ * @returns {*} The result of the XPath expression, depending on resultType :<br> <ul>
+ *          <li>if it is XPathResult.NUMBER_TYPE, then it returns a Number</li>
+ *          <li>if it is XPathResult.STRING_TYPE, then it returns a String</li>
+ *          <li>if it is XPathResult.BOOLEAN_TYPE, then it returns a boolean</li>
+ *          <li>if it is XPathResult.UNORDERED_NODE_ITERATOR_TYPE
+ *              or XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, then it returns an array of nodes</li>
+ *          <li>if it is XPathResult.ORDERED_NODE_SNAPSHOT_TYPE
+ *              or XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE, then it returns an array of nodes</li>
+ *          <li>if it is XPathResult.ANY_UNORDERED_NODE_TYPE
+ *              or XPathResult.FIRST_ORDERED_NODE_TYPE, then it returns a single node</li>
+ *          </ul>
+ */
+Xpath.evaluateXPath = function(doc, xpath, contextNode, resultType)
+{
+    if (contextNode === undefined)
+        contextNode = doc;
+
+    if (resultType === undefined)
+        resultType = XPathResult.ANY_TYPE;
+
+    var result = doc.evaluate(xpath, contextNode, null, resultType, null);
+
+    switch (result.resultType)
+    {
+        case XPathResult.NUMBER_TYPE:
+            return result.numberValue;
+
+        case XPathResult.STRING_TYPE:
+            return result.stringValue;
+
+        case XPathResult.BOOLEAN_TYPE:
+            return result.booleanValue;
+
+        case XPathResult.UNORDERED_NODE_ITERATOR_TYPE:
+        case XPathResult.ORDERED_NODE_ITERATOR_TYPE:
+            var nodes = [];
+            for (var item = result.iterateNext(); item; item = result.iterateNext())
+                nodes.push(item);
+            return nodes;
+
+        case XPathResult.UNORDERED_NODE_SNAPSHOT_TYPE:
+        case XPathResult.ORDERED_NODE_SNAPSHOT_TYPE:
+            var nodes = [];
+            for (var i = 0; i < result.snapshotLength; ++i)
+                nodes.push(result.snapshotItem(i));
+            return nodes;
+
+        case XPathResult.ANY_UNORDERED_NODE_TYPE:
+        case XPathResult.FIRST_ORDERED_NODE_TYPE:
+            return result.singleNodeValue;
+    }
 };
 
 Xpath.getRuleMatchingElements = function(rule, doc)
@@ -186,6 +247,7 @@ Xpath.getRuleMatchingElements = function(rule, doc)
 };
 
 // ********************************************************************************************* //
+// Registration
 
 return Xpath;
 

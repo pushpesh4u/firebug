@@ -1,58 +1,61 @@
 function runTest()
 {
-    FBTest.sysout("issue654.START");
-
-    // This test is only for FF5+
-    if (FBTest.compareFirefoxVersion("5") < 0)
-    {
-        FBTest.testDone("issue654.DONE");
-        return;
-    }
-
-    // Make sure all net panel columns are displayed.
-    FBTest.setPref("net.hiddenColumns", "");
-
     FBTest.openNewTab(basePath + "net/654/issue654.html", function(win)
     {
-        FBTest.enableNetPanel(function(win)
+        // 1. Open Firebug
+        FBTest.openFirebug(function()
         {
-            FBTest.selectPanel("net");
-
-            onRequestDisplayed(function(row)
+            // 2. Enable and switch to the Net panel
+            FBTest.enableNetPanel(function(win)
             {
-                // Expand Net's panel UI so, it's populated with data.
-                var panelNode = FBTest.getPanel("net").panelNode;
-                var localIPs = panelNode.querySelectorAll(".netLocalAddressCol .netAddressLabel");
-                var remoteIPs = panelNode.querySelectorAll(".netRemoteAddressCol .netAddressLabel");
-
-                FBTest.compare(2, localIPs.length, "There must be two Local IPs");
-                FBTest.compare(2, remoteIPs.length, "There must be two Remote IPs");
-
-                if (localIPs.length == 2 && remoteIPs.length == 2)
+                // 3. Reload the page
+                FBTest.reload(function ()
                 {
-                    var reIP = /\b(?:\d{1,3}\.){3}\d{1,3}\:\d{1,5}\b/;
-                    FBTest.progress("First Local IP: " + localIPs[0].textContent);
-                    FBTest.compare(reIP, localIPs[0].textContent, "IP address and port number is expected.");
-                    FBTest.progress("Second Local IP: " + localIPs[1].textContent);
-                    FBTest.compare(reIP, localIPs[1].textContent, "IP address and port number is expected.");
-                    FBTest.progress("First Remote IP: " + remoteIPs[0].textContent);
-                    FBTest.compare(reIP, remoteIPs[0].textContent, "IP address and port number is expected.");
-                    FBTest.progress("Second Remote IP: " + remoteIPs[1].textContent);
-                    FBTest.compare(reIP, remoteIPs[1].textContent, "IP address and port number is expected.");
-                }
+                    // TODO 4. Right-click the <em>Net</em> panel's header and check the "Local IP" entry
 
-                FBTest.testDone("issue654.DONE");
+                    var config = {
+                        tagName: "tr",
+                        classes: "netRow category-xhr hasHeaders loaded"
+                        // There is already one request displayed in the Net panel,
+                        // so make sure the test is waiting for new entry (not the existing one)
+                        //onlyMutations: true
+                    };
+
+                    FBTest.waitForDisplayedElement("net", config, function(row)
+                    {
+                        var panelNode = FBTest.getSelectedPanel().panelNode;
+                        var localIPs = panelNode.querySelectorAll(".netLocalAddressCol .netAddressLabel");
+                        var remoteIPs = panelNode.querySelectorAll(".netRemoteAddressCol .netAddressLabel");
+
+                        FBTest.compare(3, localIPs.length, "There must be three local IPs");
+                        FBTest.compare(3, remoteIPs.length, "There must be three remote IPs");
+
+                        if (localIPs.length == 3 && remoteIPs.length == 3)
+                        {
+                            var reIP = /^((?:\d{1,3}\.){3}\d{1,3}|\[[0-9a-f:]*?\])\:\d{1,5}$/;
+                            var ordinals = ["First", "Second", "Third"];
+
+                            for (var i = 0; i < 3; i++)
+                            {
+                                FBTest.progress(ordinals[i] + " local IP: " + localIPs[i].textContent);
+                                FBTest.compare(reIP, localIPs[i].textContent,
+                                    ordinals[i] + " entry for local IP address and port number should " +
+                                        "be a valid IP address");
+
+                                FBTest.progress(ordinals[i] + " remote IP: " + remoteIPs[1].textContent);
+                                FBTest.compare(reIP, remoteIPs[1].textContent,
+                                    ordinals[i] + " entry for remote IP address and port number should " +
+                                        "be be a valid IP address");
+                            }
+                        }
+
+                        FBTest.testDone();
+                    });
+
+                    // 5. Click the "Make request" button
+                    FBTest.click(win.document.getElementById("makeRequest"));
+                });
             });
-
-            FBTest.click(win.document.getElementById("testButton"));
         });
     });
-}
-
-function onRequestDisplayed(callback)
-{
-    var doc = FBTest.getPanelDocument();
-    var recognizer = new MutationRecognizer(doc.defaultView, "tr",
-        {"class": "netRow category-xhr loaded"});
-    recognizer.onRecognizeAsync(callback);
 }

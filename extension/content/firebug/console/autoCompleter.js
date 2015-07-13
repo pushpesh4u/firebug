@@ -1,51 +1,72 @@
 /* See license.txt for terms of usage */
+/*global define:1, KeyEvent:1*/
 
 define([
-    "firebug/lib/object",
     "firebug/firebug",
-    "firebug/lib/domplate",
-    "firebug/chrome/reps",
-    "firebug/lib/locale",
-    "firebug/lib/events",
-    "firebug/lib/wrapper",
-    "firebug/lib/dom",
-    "firebug/lib/string",
+    "firebug/lib/trace",
     "firebug/lib/array",
-    "firebug/editor/editor"
+    "firebug/lib/dom",
+    "firebug/lib/domplate",
+    "firebug/lib/events",
+    "firebug/lib/locale",
+    "firebug/lib/object",
+    "firebug/lib/string",
+    "firebug/lib/wrapper",
+    "firebug/lib/options",
+    "firebug/console/closureInspector",
+    "firebug/console/commandLineExposed",
 ],
-function(Obj, Firebug, Domplate, FirebugReps, Locale, Events, Wrapper, Dom, Str, Arr, Editor) {
+function(Firebug, FBTrace, Arr, Dom, Domplate, Events, Locale, Obj, Str, Wrapper, Options,
+    ClosureInspector, CommandLineExposed) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
+var TraceError = FBTrace.toError();
+var Trace = FBTrace.to("DBG_COMMANDLINE");
 
-const reOpenBracket = /[\[\(\{]/;
-const reCloseBracket = /[\]\)\}]/;
-const reJSChar = /[a-zA-Z0-9$_]/;
-const reLiteralExpr = /^[ "0-9,]*$/;
+var kwActions = ["throw", "return", "in", "instanceof", "delete", "new",
+                 "typeof", "void", "yield"];
+var kwAll = ["break", "case", "catch", "const", "continue", "debugger",
+  "default", "delete", "do", "else", "false", "finally", "for", "function",
+  "get", "if", "in", "instanceof", "let", "new", "null", "return", "set",
+  "switch", "this", "throw", "true", "try", "typeof", "var", "void", "while",
+  "with", "yield"];
+var reOpenBracket = /[\[\(\{]/;
+var reCloseBracket = /[\]\)\}]/;
+var reJSChar = /[a-zA-Z0-9$_]/;
+var reLiteralExpr = /^[ "0-9,]*$/;
+
+var measureCache = {};
 
 // ********************************************************************************************* //
 // JavaScript auto-completion
 
-Firebug.JSAutoCompleter = function(textBox, completionBox, options)
+function JSAutoCompleter(textBox, completionBox, options)
 {
+    var popupSize = 40;
+
     this.textBox = textBox;
-    this.completionBox = completionBox;
     this.options = options;
-    this.showCompletionPopup = options.completionPopup;
+
+    this.completionBox = completionBox;
+    this.popupTop = this.popupBottom = null;
 
     this.completionBase = {
         pre: null,
         expr: null,
-        candidates: []
+        forceShowPopup: false,
+        candidates: [],
+        hiddenCandidates: []
     };
     this.completions = null;
 
     this.revertValue = null;
 
-    this.completionPopup = Firebug.chrome.$("fbCommandLineCompletionList");
+    this.showCompletionPopup = options.showCompletionPopup;
+    this.completionPopup = options.completionPopup;
     this.selectedPopupElement = null;
 
     /**
@@ -58,7 +79,6 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
             return false;
 
         this.textBox.value = this.revertValue;
-        var len = this.textBox.value.length;
         setCursorToEOL(this.textBox);
 
         this.complete(context);
@@ -73,11 +93,22 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         this.completionBase = {
             pre: null,
             expr: null,
-            candidates: []
+            forceShowPopup: false,
+            candidates: [],
+            hiddenCandidates: []
         };
         this.completions = null;
 
-        this.showCompletions();
+        this.showCompletions(false);
+    };
+
+    /**
+     * Completely reset the auto-completer.
+     */
+    this.reset = function()
+    {
+        this.hide();
+        this.revertValue = null;
     };
 
     /**
@@ -88,9 +119,10 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
     this.hideForExpression = function()
     {
         this.completionBase.candidates = [];
+        this.completionBase.hiddenCandidates = [];
         this.completions = null;
 
-        this.showCompletions();
+        this.showCompletions(false);
     };
 
     /**
@@ -102,7 +134,7 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         if (!this.completions)
             return true;
 
-        if (this.getCompletionBoxValue() === this.textBox.value)
+        if (this.getCompletionValue() === this.textBox.value)
         {
             // The user wouldn't see a difference if we completed. This can
             // happen for example if you type 'alert' and press enter,
@@ -117,43 +149,34 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
      * Show completions for the current contents of the text box. Either this or
      * hide() must be called when the contents change.
      */
-    this.complete = function(context)
+    this.complete = function(context, force)
     {
         this.revertValue = null;
-        this.createCandidates(context);
-        this.showCompletions();
+        var offset = this.textBox.selectionStart;
+        if (this.createCandidates(context, this.textBox.value, offset, force))
+            this.showCompletions(false);
+        else
+            this.hide();
     };
 
     /**
      * Update the completion base and create completion candidates for the
      * current value of the text box.
      */
-    this.createCandidates = function(context)
+    this.createCandidates = function(context, value, offset, force)
     {
-        var offset = this.textBox.selectionStart;
-        if (offset !== this.textBox.value.length)
-        {
-            this.hide();
-            return;
-        }
-
-        var value = this.textBox.value;
+        if (offset !== value.length)
+            return false;
 
         // Create a simplified expression by redacting contents/normalizing
         // delimiters of strings and regexes, to make parsing easier.
         // Give up if the syntax is too weird.
-        var svalue = simplifyExpr(value);
+        var svalue = simplifyExpr(value, this.options.multiLine);
         if (svalue === null)
-        {
-            this.hide();
-            return;
-        }
+            return false;
 
-        if (killCompletions(svalue, value))
-        {
-            this.hide();
-            return;
-        }
+        if (killCompletions(svalue, value, force))
+            return false;
 
         // Find the expression to be completed.
         var parseStart = getExpressionOffset(svalue);
@@ -166,58 +189,130 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         var spreExpr = sparsed.substr(0, propertyStart);
         var preExpr = parsed.substr(0, propertyStart);
 
-        this.completionBase.pre = value.substr(0, parseStart);
+        var spreParsed = svalue.substr(0, parseStart);
+        var preParsed = value.substr(0, parseStart);
 
-        if (FBTrace.DBG_COMMANDLINE)
+        if (Trace.active)
         {
             var sep = (parsed.indexOf("|") > -1) ? "^" : "|";
-            FBTrace.sysout("Completing: " + this.completionBase.pre + sep + preExpr + sep + prop);
+            Trace.sysout("Completing: " + preParsed + sep + preExpr + sep + prop);
         }
 
-        // We only need to calculate a new candidate list if the expression has
-        // changed (we can ignore this.completionBase.pre since completions do not
-        // depend upon that).
-        if (preExpr !== this.completionBase.expr)
+        var prevCompletions = this.completions;
+
+        // We only need to calculate a new candidate list if the expression has changed.
+        if (preExpr !== this.completionBase.expr || preParsed !== this.completionBase.pre)
         {
+            var evalOptions = {
+                includeCommandLineAPI: options.includeCommandLineAPI,
+                includeCurrentScope: options.includeCurrentScope
+            };
+            if (!preExpr)
+            {
+                // Add names of variables declared previously in the typed code.
+                evalOptions.additionalCompletions =
+                    this.options.additionalGlobalCompletions ||
+                    getNewlyDeclaredNames(spreParsed);
+            }
+
             this.completionBase.expr = preExpr;
-            this.completionBase.candidates = autoCompleteEval(context, preExpr, spreExpr,
-                this.options.includeCurrentScope);
+            this.completionBase.pre = preParsed;
+            var ev = autoCompleteEval(context, preExpr, spreExpr,
+                preParsed, spreParsed, evalOptions);
+            prevCompletions = null;
+            this.completionBase.candidates = ev.completions;
+            this.completionBase.hiddenCandidates = ev.hiddenCompletions;
+            this.completionBase.forceShowPopup = false;
         }
 
-        this.createCompletions(prop);
+        this.createCompletions(prop, prevCompletions, force);
+        return true;
     };
 
     /**
      * From a valid completion base, create a list of completions (containing
-     * those completion candidates that share a prefix with the user's input)
-     * and a default completion.
+     * those completion candidates that share a (sometimes case-insensitive)
+     * prefix with the user's input) and a default completion. The completions
+     * for the previous expression (null if none) are used to help with the
+     * latter.
      */
-    this.createCompletions = function(prefix)
+    this.createCompletions = function(prefix, prevCompletions, force)
     {
-        var candidates = this.completionBase.candidates;
-        var valid = [];
-
-        if (!this.completionBase.expr && !prefix)
+        if (!this.completionBase.expr && !prefix && !force)
         {
             // Don't complete "".
+            this.completions = null;
+            return;
         }
-        else
+        if (!this.completionBase.candidates.length && !prefix && !force)
         {
-            for (var i = 0; i < candidates.length; ++i)
-            {
-                var name = candidates[i];
-                if (Str.hasPrefix(name, prefix))
-                    valid.push(name);
-            }
+            // Don't complete empty objects -> toString.
+            this.completions = null;
+            return;
         }
 
-        if (valid.length > 0)
+        var valid = [], ciValid = [];
+        var clist = [this.completionBase.candidates, this.completionBase.hiddenCandidates];
+        var cind = 0;
+
+        var lowPrefix = prefix.toLowerCase();
+        var mustMatchFirstLetter = (!this.completionBase.expr && prefix.length > 0);
+        while (ciValid.length === 0 && cind < 2)
         {
+            var candidates = clist[cind];
+            for (var i = 0; i < candidates.length; ++i)
+            {
+                // Mark a candidate as matching if it matches the prefix case-
+                // insensitively, and shares its upper-case characters. The
+                // exception to this is that for global completions, the first
+                // character must match exactly (see issue 6030).
+                var cand = candidates[i], name = cand.name;
+                if (!Str.hasPrefix(name.toLowerCase(), lowPrefix))
+                    continue;
+
+                if (mustMatchFirstLetter && name.charAt(0) !== prefix.charAt(0))
+                    continue;
+
+                var fail = false;
+                for (var j = 0; j < prefix.length; ++j)
+                {
+                    var ch = prefix.charAt(j);
+                    if (ch !== ch.toLowerCase() && ch !== name.charAt(j))
+                    {
+                        fail = true;
+                        break;
+                    }
+                }
+                if (!fail)
+                {
+                    ciValid.push(cand);
+                    if (Str.hasPrefix(name, prefix))
+                        valid.push(cand);
+                }
+            }
+            ++cind;
+        }
+
+        if (ciValid.length > 0)
+        {
+            // If possible, default to a candidate matching the case by picking
+            // a default from 'valid' and correcting its index.
+            var hasMatchingCase = (valid.length > 0);
+
             this.completions = {
-                list: valid,
-                prefix: prefix
+                list: (hasMatchingCase ? valid : ciValid),
+                prefix: prefix,
+                hidePopup: (cind === 2),
+                forced: force
             };
-            this.pickDefaultCandidate();
+            this.completions.index = this.pickDefaultCandidate(prevCompletions);
+
+            if (hasMatchingCase)
+            {
+                var find = valid[this.completions.index];
+                this.completions.list = ciValid;
+                this.completions.index = ciValid.indexOf(find);
+            }
         }
         else
         {
@@ -226,34 +321,112 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
     };
 
     /**
-     * Chose a default candidate from the list of completions. This is currently
-     * selected as the shortest completion, to make completions disappear when
-     * typing a variable name that is also the prefix of another.
+     * Choose a default candidate from the list of completions. The first of all
+     * shortest completions is currently used for this, except in some very hacky,
+     * but useful, special cases.
      */
-    this.pickDefaultCandidate = function()
+    this.pickDefaultCandidate = function(prevCompletions)
     {
-        var pick = 0;
-        var ar = this.completions.list;
-        for (var i = 1; i < ar.length; i++)
+        var list = this.completions.list.map(function(x)
         {
-            if (ar[i].length < ar[pick].length)
-                pick = i;
+            return x.name;
+        }), ind;
+
+        // If the typed expression is an extension of the previous completion, keep it.
+        if (prevCompletions && Str.hasPrefix(this.completions.prefix, prevCompletions.prefix))
+        {
+            var lastCompletion = prevCompletions.list[prevCompletions.index].name;
+            ind = list.indexOf(lastCompletion);
+            if (ind !== -1)
+                return ind;
         }
-        this.completions.index = pick;
+
+        if (!this.completionBase.expr && !this.completions.prefix)
+            return list.length - 1;
+
+        // Special-case certain expressions. (But remember to pick prefix-free
+        // candidates; otherwise "validVariable<return>" can auto-complete
+        // instead of run.)
+        var prefixFree = function(name)
+        {
+            return !list.some(function(x)
+            {
+                return x.length < name.length && Str.hasPrefix(name, x);
+            });
+        };
+        var special = {
+            "": ["document", "console", "frames", "window", "parseInt", "undefined", "navigator",
+                "Array", "Math", "Object", "String", "XMLHttpRequest", "Window"],
+            "window.": ["console"],
+            "location.": ["href"],
+            "console.": ["log"],
+            "document.": ["getElementById", "addEventListener", "createElement", "documentElement"],
+            "Object.prototype.toString.": ["call"]
+        };
+        if (special.hasOwnProperty(this.completionBase.expr))
+        {
+            var ar = special[this.completionBase.expr];
+            for (var i = 0; i < ar.length; ++i)
+            {
+                var prop = ar[i];
+                if (Str.hasPrefix(prop, this.completions.prefix))
+                {
+                    // Use 'prop' as a completion, if it exists.
+                    ind = list.indexOf(prop);
+                    if (ind !== -1 && prefixFree(prop))
+                        return ind;
+                }
+            }
+        }
+
+        // 'prototype' is a good default if it exists.
+        ind = list.indexOf("prototype");
+        if (ind !== -1 && prefixFree("prototype"))
+            return ind;
+
+        // Simply pick out the shortest candidate. This works remarkably well.
+        ind = 0;
+        for (var i = 1; i < list.length; ++i)
+        {
+            if (list[i].length < list[ind].length)
+                ind = i;
+        }
+
+        // Avoid some completions in favor of others.
+        var replacements = {
+            "toSource": "toString",
+            "toFixed": "toString",
+            "watch": "toString",
+            "pattern": "parentNode",
+            "getSelection": "getEventListeners",
+            "inspect": "include",
+            "home": "history"
+        };
+        if (replacements.hasOwnProperty(list[ind]))
+        {
+            var ind2 = list.indexOf(replacements[list[ind]]);
+            if (ind2 !== -1)
+                return ind2;
+        }
+
+        return ind;
     };
 
     /**
-     * Go backward or forward one step in the list of completions.
-     * dir is the relative movement in the list; -1 means backward and 1 forward.
+     * Go backward or forward by some number of steps in the list of completions.
+     * dir is the relative movement in the list (negative for backwards movement).
      */
-    this.cycle = function(dir)
+    this.cycle = function(dir, clamp)
     {
-        this.completions.index += dir;
-        if (this.completions.index >= this.completions.list.length)
-            this.completions.index = 0;
-        else if (this.completions.index < 0)
-            this.completions.index = this.completions.list.length - 1;
-        this.showCompletions();
+        var ind = this.completions.index + dir;
+        if (clamp)
+            ind = Math.max(Math.min(ind, this.completions.list.length - 1), 0);
+        else if (ind >= this.completions.list.length)
+            ind = 0;
+        else if (ind < 0)
+            ind = this.completions.list.length - 1;
+        this.completions.index = ind;
+        this.showCompletions(true);
     };
 
     /**
@@ -262,7 +435,7 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
      */
     this.getCurrentCompletion = function()
     {
-        return (this.completions ? this.completions.list[this.completions.index] : null);
+        return (this.completions ? this.completions.list[this.completions.index].name : null);
     };
 
     /**
@@ -282,21 +455,31 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         var completion = this.getCurrentCompletion();
         if (completion === null)
             return "";
-        return this.completionBase.pre + this.completionBase.expr + completion;
+        var userTyped = this.textBox.value;
+        var value = this.completionBase.pre + this.completionBase.expr + completion;
+        var whitespace = " ".repeat(userTyped.length);
+        return whitespace + value.substr(userTyped.length);
     };
 
     /**
      * Update the completion box and popup to be consistent with the current
-     * state of the auto-completer.
+     * state of the auto-completer. If just cycling, the old scolling state
+     * for the popup is preserved.
      */
-    this.showCompletions = function()
+    this.showCompletions = function(cycling)
     {
         this.completionBox.value = this.getCompletionBoxValue();
 
-        if (this.showCompletionPopup && this.completions && this.completions.list.length > 1)
-            this.popupCandidates();
+        if (this.completions && (this.completionBase.forceShowPopup ||
+            (this.completions.list.length > 1 && this.showCompletionPopup &&
+             !this.completions.hidePopup)))
+        {
+            this.popupCandidates(cycling);
+        }
         else
+        {
             this.closePopup();
+        }
     };
 
     /**
@@ -311,7 +494,8 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
             return false;
 
         if (event.keyCode === KeyEvent.DOM_VK_TAB &&
-            !Events.isControl(event) && this.textBox.value !== "")
+            !Events.isControl(event) && !Events.isControlShift(event) &&
+            this.textBox.value !== "")
         {
             if (this.completions)
             {
@@ -347,11 +531,23 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
             Events.cancelEvent(event);
             return true;
         }
+        else if (event.keyCode === KeyEvent.DOM_VK_BACK_SPACE)
+        {
+            if (this.completions && !this.textBox.value)
+            {
+                this.hide();
+                Events.cancelEvent(event);
+                return true;
+            }
+        }
         else if (event.keyCode === KeyEvent.DOM_VK_ESCAPE)
         {
             if (this.completions)
             {
-                this.hideForExpression();
+                if (this.completions.forced)
+                    this.hide();
+                else
+                    this.hideForExpression();
                 Events.cancelEvent(event);
                 return true;
             }
@@ -366,11 +562,32 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
                 }
             }
         }
-        else if (event.keyCode === KeyEvent.DOM_VK_UP || event.keyCode === KeyEvent.DOM_VK_DOWN)
+        else if (event.keyCode === KeyEvent.DOM_VK_UP ||
+            event.keyCode === KeyEvent.DOM_VK_DOWN)
         {
             if (this.completions)
             {
-                this.cycle((event.keyCode === KeyEvent.DOM_VK_UP ? -1 : 1));
+                this.cycle(event.keyCode === KeyEvent.DOM_VK_UP ? -1 : 1, false);
+                Events.cancelEvent(event);
+                return true;
+            }
+        }
+        else if (event.keyCode === KeyEvent.DOM_VK_PAGE_UP ||
+            event.keyCode === KeyEvent.DOM_VK_PAGE_DOWN)
+        {
+            if (this.completions)
+            {
+                this.pageCycle(event.keyCode === KeyEvent.DOM_VK_PAGE_UP ? -1 : 1);
+                Events.cancelEvent(event);
+                return true;
+            }
+        }
+        else if (event.keyCode === KeyEvent.DOM_VK_HOME ||
+            event.keyCode === KeyEvent.DOM_VK_END)
+        {
+            if (this.isPopupOpen())
+            {
+                this.topCycle(event.keyCode === KeyEvent.DOM_VK_HOME ? -1 : 1);
                 Events.cancelEvent(event);
                 return true;
             }
@@ -387,7 +604,26 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         {
             // Close the completion popup on escape in keydown, so that the popup
             // does not close itself and prevent event propagation on keypress.
-            this.closePopup();
+            // (Unless the popup is only open due to Ctrl+Space on a non-empty
+            // command line, in which case that's precisely what we want.)
+            if (!this.forceShowPopup || this.completions.forced)
+                this.closePopup();
+        }
+        else if (event.keyCode === KeyEvent.DOM_VK_SPACE && Events.isControl(event))
+        {
+            if (!this.completions)
+            {
+                // If completions have been hidden, show them again.
+                this.hide();
+                this.complete(context);
+            }
+
+            if (this.completions && !this.isPopupOpen())
+            {
+                // Force-show the completion popup.
+                this.completionBase.forceShowPopup = true;
+                this.popupCandidates(false);
+            }
         }
     };
 
@@ -404,21 +640,52 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
 
     this.setTabWarning = function()
     {
-        this.completionBox.value = this.textBox.value + "    " +
+        var whitespace = " ".repeat(this.textBox.value.length);
+        this.completionBox.value = whitespace + "    " +
             Locale.$STR("firebug.completion.empty");
 
         this.tabWarning = true;
     };
 
     /**
-     * Accept the currently shown completion in the text box.
+     * Get what should be completed to; this is only vaguely related to what is
+     * shown in the completion box.
+     */
+    this.getCompletionValue = function()
+    {
+        var property = this.getCurrentCompletion();
+        var preParsed = this.completionBase.pre, preExpr = this.completionBase.expr;
+        var res = preParsed + preExpr + property;
+
+        // Don't adjust index completions.
+        if (/^\[['"]$/.test(preExpr.slice(-2)))
+            return res;
+
+        if (!isValidProperty(property))
+        {
+            // The property name is actually invalid in free form, so replace
+            // it with array syntax.
+
+            if (preExpr)
+            {
+                res = preParsed + preExpr.slice(0, -1);
+            }
+            else
+            {
+                // Global variable access - assume the variable is a member of 'window'.
+                res = preParsed + "window";
+            }
+            res += '["' + Str.escapeJS(property) + '"]';
+        }
+        return res;
+    };
+
+    /**
+     * Accept the current completion into the text box.
      */
     this.acceptCompletion = function()
     {
-        var completion = this.getCurrentCompletion();
-        completion = adjustCompletionOnAccept(this.completionBase.pre,
-                this.completionBase.expr, completion);
-
+        var completion = this.getCompletionValue();
         var originalValue = this.textBox.value;
         this.textBox.value = completion;
         setCursorToEOL(this.textBox);
@@ -427,65 +694,161 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         this.revertValue = originalValue;
     };
 
-    this.popupCandidates = function()
+    this.pageCycle = function(dir)
     {
-        var commandCompletionLineLimit = 40;
+        var length = this.completions.list.length, selIndex = this.completions.index;
 
-        Dom.eraseNode(this.completionPopup);
+        if (!this.isPopupOpen())
+        {
+            // When no popup is open, cycle by a fixed amount and stop at edges.
+            this.cycle(dir * 15, true);
+            return;
+        }
+
+        var top = this.popupTop, bottom = this.popupBottom;
+        if (top === 0 && bottom === length)
+        {
+            // For a single scroll page, act like home/end.
+            this.topCycle(dir);
+            return;
+        }
+
+        var immediateTarget;
+        if (dir === -1)
+            immediateTarget = (top === 0 ? top : top + 2);
+        else
+            immediateTarget = (bottom === length ? bottom: bottom - 2) - 1;
+        if ((selIndex - immediateTarget) * dir < 0)
+        {
+            // The selection has not yet reached the edge target, so jump to it.
+            selIndex = immediateTarget;
+        }
+        else
+        {
+            // Show the next page.
+            if (dir === -1 && top - popupSize <= 0)
+                selIndex = 0;
+            else if (dir === 1 && bottom + popupSize >= length)
+                selIndex = length - 1;
+            else
+                selIndex = immediateTarget + dir*popupSize;
+        }
+
+        this.completions.index = selIndex;
+        this.showCompletions(true);
+    };
+
+    this.topCycle = function(dir)
+    {
+        if (dir === -1)
+            this.completions.index = 0;
+        else
+            this.completions.index = this.completions.list.length - 1;
+        this.showCompletions(true);
+    };
+
+    this.popupCandidates = function(cycling)
+    {
+        var doc = this.completionPopup.ownerDocument;
         this.selectedPopupElement = null;
 
-        var vbox = this.completionPopup.ownerDocument.createElement("vbox");
-        this.completionPopup.appendChild(vbox);
+        var vbox = doc.createElement("vbox");
         vbox.classList.add("fbCommandLineCompletions");
 
-        var title = this.completionPopup.ownerDocument.
-            createElementNS("http://www.w3.org/1999/xhtml","div");
-        title.innerHTML = Locale.$STR("console.Use Arrow keys or Enter");
+        var title = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+        title.textContent = Locale.$STR("console.Use Arrow keys, Tab or Enter");
         title.classList.add("fbPopupTitle");
         vbox.appendChild(title);
 
-        var escPrefix = Str.escapeForTextNode(this.textBox.value);
+        var list = this.completions.list, selIndex = this.completions.index;
 
-        var showTop = 0;
-        var showBottom = this.completions.list.length;
-        if (this.completions.list.length > commandCompletionLineLimit)
+        if (list.length <= popupSize)
         {
-            if (this.completions.index <= (commandCompletionLineLimit - 3))
+            this.popupTop = 0;
+            this.popupBottom = list.length;
+        }
+        else
+        {
+            var self = this;
+            var setTop = function(val)
             {
-                // We are in the top part of the list.
-                showBottom = commandCompletionLineLimit;
+                if (val < 0)
+                    val = 0;
+                self.popupTop = val;
+                self.popupBottom = val + popupSize;
+                if (self.popupBottom > list.length)
+                    setBottom(list.length);
+            };
+            var setBottom = function(val)
+            {
+                if (val > list.length)
+                    val = list.length;
+                self.popupBottom = val;
+                self.popupTop = val - popupSize;
+                if (self.popupTop < 0)
+                    setTop(0);
+            };
+
+            if (!cycling)
+            {
+                // Show the selection at nearly the bottom of the popup, where
+                // it is more local.
+                setBottom(selIndex + 3);
             }
             else
             {
-                // Implement manual scrolling.
-                if (this.completions.index > (this.completions.list.length - 3))
-                    showBottom = this.completions.list.length;
-                else
-                    showBottom = this.completions.index + 3;
+                // Scroll the popup such that selIndex fits.
+                if (selIndex - 2 < this.popupTop)
+                    setTop(selIndex - 2);
+                else if (selIndex + 3 > this.popupBottom)
+                    setBottom(selIndex + 3);
             }
-
-            showTop = showBottom - commandCompletionLineLimit;
         }
 
-        for (var i = showTop; i < showBottom; i++)
-        {
-            var hbox = this.completionPopup.ownerDocument.
-                createElementNS("http://www.w3.org/1999/xhtml","div");
-            hbox.completionIndex = i;
+        var separatorInserted = false;
 
-            var pre = this.completionPopup.ownerDocument.
-                createElementNS("http://www.w3.org/1999/xhtml","span");
-            pre.innerHTML = escPrefix;
+        for (var i = this.popupTop; i < this.popupBottom; i++)
+        {
+            var prefixLen = this.completions.prefix.length;
+            var completion = list[i], name = completion.name;
+
+            var hbox = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+            hbox.completionIndex = i;
+            hbox.classList.add("completionLine");
+            hbox.classList.add("fbPopupEntry");
+
+            var pre = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+            var preText = this.completionBase.expr + name.substr(0, prefixLen);
+            pre.textContent = preText;
             pre.classList.add("userTypedText");
 
-            var completion = this.completions.list[i].substr(this.completions.prefix.length);
-            var post = this.completionPopup.ownerDocument.
-                createElementNS("http://www.w3.org/1999/xhtml","span");
-            post.innerHTML = Str.escapeForTextNode(completion);
+            var post = doc.createElementNS("http://www.w3.org/1999/xhtml", "span");
+            var postText = name.substr(prefixLen);
+            post.textContent = postText;
             post.classList.add("completionText");
 
-            if (i === this.completions.index)
+            if (i === selIndex)
                 this.selectedPopupElement = hbox;
+
+            if (completion.type === CompletionType.API)
+            {
+                hbox.classList.add("apiCompletion");
+
+                if (!separatorInserted)
+                {
+                    var separator = doc.createElementNS("http://www.w3.org/1999/xhtml", "div");
+                    separator.textContent = Locale.$STR("console.Firebug_Command_Line_API");
+                    separator.classList.add("fbPopupSeparator");
+                    vbox.appendChild(separator);
+
+                    separatorInserted = true;
+                }
+            }
+
+            if (completion.type === CompletionType.API)
+                hbox.classList.add("cmd");
+            else
+                hbox.classList.add("dom");
 
             hbox.appendChild(pre);
             hbox.appendChild(post);
@@ -495,22 +858,62 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         if (this.selectedPopupElement)
             this.selectedPopupElement.setAttribute("selected", "true");
 
-        this.completionPopup.openPopup(this.textBox, "before_start", 0, 0, false, false);
+        // Open the popup at the pixel position of the start of the completed
+        // expression. The text length times the width of a single character,
+        // plus apparent padding, is a good enough approximation of this.
+        var chWidth = this.getCharWidth();
+        var offsetX = Math.round(this.completionBase.pre.length * chWidth) + 2;
+
+        // xxxHonza: needs to be properly calculated
+        offsetX -= 5;
+
+        var popup = this.completionPopup;
+        Dom.eraseNode(popup);
+        if (popup.state === "closed")
+        {
+            // Hack: Open the popup and force a reflow while it is empty, to avoid
+            // being hit by bug 842380 (see issue 6197).
+            popup.openPopup(this.textBox, "before_start", offsetX, 0, false, false);
+            popup.clientHeight;
+            popup.appendChild(vbox);
+        }
+        else
+        {
+            popup.appendChild(vbox);
+            popup.openPopup(this.textBox, "before_start", offsetX, 0, false, false);
+        }
+    };
+
+    this.getCharWidth = function()
+    {
+        var size = Options.get("textSize");
+        if (!measureCache[size])
+        {
+            var measurer = this.options.popupMeasurer;
+            measurer.style.fontSizeAdjust = this.textBox.style.fontSizeAdjust;
+            measureCache[size] = measurer.offsetWidth / 60;
+        }
+        return measureCache[size];
+    };
+
+    this.isPopupOpen = function()
+    {
+        return (this.completionPopup && this.completionPopup.state !== "closed");
     };
 
     this.closePopup = function()
     {
-        if (this.completionPopup.state == "closed")
+        if (!this.isPopupOpen())
             return;
 
         try
         {
             this.completionPopup.hidePopup();
+            this.selectedPopupElement = null;
         }
         catch (err)
         {
-            if (FBTrace.DBG_ERRORS)
-                FBTrace.sysout("Firebug.JSAutoCompleter.closePopup; EXCEPTION " + err, err);
+            TraceError.sysout("JSAutoCompleter.closePopup; EXCEPTION " + err, err);
         }
     };
 
@@ -538,6 +941,15 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
         this.completionBox.value = this.getCompletionBoxValue();
     };
 
+    this.popupScroll = function(event)
+    {
+        if (event.axis !== event.VERTICAL_AXIS)
+            return;
+        if (!this.getCompletionPopupElementFromEvent(event))
+            return;
+        this.cycle(event.detail, true);
+    };
+
     this.popupClick = function(event)
     {
         var el = this.getCompletionPopupElementFromEvent(event);
@@ -549,6 +961,7 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
     };
 
     this.popupMousedown = Obj.bind(this.popupMousedown, this);
+    this.popupScroll = Obj.bind(this.popupScroll, this);
     this.popupClick = Obj.bind(this.popupClick, this);
 
     /**
@@ -558,101 +971,124 @@ Firebug.JSAutoCompleter = function(textBox, completionBox, options)
     {
         this.completionBox.value = "";
 
-        Events.removeEventListener(this.completionPopup, "mousedown", this.popupMousedown, true);
-        Events.removeEventListener(this.completionPopup, "click", this.popupClick, true);
+        if (this.completionPopup)
+        {
+            Events.removeEventListener(this.completionPopup, "mousedown", this.popupMousedown, true);
+            Events.removeEventListener(this.completionPopup, "DOMMouseScroll", this.popupScroll, true);
+            Events.removeEventListener(this.completionPopup, "click", this.popupClick, true);
+        }
     };
 
-    Events.addEventListener(this.completionPopup, "mousedown", this.popupMousedown, true);
-    Events.addEventListener(this.completionPopup, "click", this.popupClick, true);
-};
-
-// ********************************************************************************************* //
-
-/**
- * A dummy auto-completer, set as current by CommandLine.setAutoCompleter when
- * no completion is supposed to be done (such as in the large command line,
- * currently, or when there is no context).
- */
-Firebug.EmptyJSAutoCompleter = function()
-{
-    this.empty = true;
-    this.shutdown = function() {};
-    this.hide = function() {};
-    this.complete = function() {};
-    this.acceptReturn = function() { return true; };
-    this.revert = function() { return false; };
-    this.handleKeyDown = function() {};
-    this.handleKeyPress = function() {};
-};
-
-// ********************************************************************************************* //
-
-/**
- * An (abstract) editor with simple JavaScript auto-completion.
- */
-Firebug.JSEditor = function()
-{
-};
-
-with (Domplate) {
-Firebug.JSEditor.prototype = domplate(Firebug.InlineEditor.prototype,
-{
-    setupCompleter: function(completionBox, options)
+    if (this.completionPopup)
     {
-        this.tabNavigation = false;
-        this.arrowCompletion = false;
-        this.fixedWidth = true;
-        this.completionBox = completionBox;
-
-        this.autoCompleter = new EditorJSAutoCompleter(this.input, this.completionBox, options);
-    },
-
-    updateLayout: function()
-    {
-        // Make sure the completion box stays in sync with the input box.
-        Firebug.InlineEditor.prototype.updateLayout.apply(this, arguments);
-        this.completionBox.style.width = this.input.style.width;
-        this.completionBox.style.height = this.input.style.height;
-    },
-
-    destroy: function()
-    {
-        this.autoCompleter.destroy();
-        Firebug.InlineEditor.prototype.destroy.call(this);
-    },
-
-    onKeyPress: function(event)
-    {
-        var context = this.panel.context;
-
-        if (this.getAutoCompleter().handleKeyPress(event, context))
-            return;
-
-        if (event.keyCode === KeyEvent.DOM_VK_TAB ||
-            event.keyCode === KeyEvent.DOM_VK_RETURN)
-        {
-            this.stopEditing();
-            Events.cancelEvent(event);
-        }
-    },
-
-    onInput: function()
-    {
-        var context = this.panel.context;
-        this.getAutoCompleter().complete(context);
-        Firebug.Editor.update();
+        Events.addEventListener(this.completionPopup, "mousedown", this.popupMousedown, true);
+        Events.addEventListener(this.completionPopup, "DOMMouseScroll", this.popupScroll, true);
+        Events.addEventListener(this.completionPopup, "click", this.popupClick, true);
     }
-});
 }
 
-function EditorJSAutoCompleter(box, completionBox, options)
+/**
+ * Transform expressions that use .% into more JavaScript-friendly function calls.
+ * (This is unrelated to the auto-completer, but autoCompleter.js has so many nice
+ * helper functions.)
+ */
+JSAutoCompleter.transformScopeOperator = function(expr, fname)
 {
-    var ac = new Firebug.JSAutoCompleter(box, completionBox, options);
+    var sexpr = simplifyExpr(expr, false);
+    if (!sexpr)
+        return expr;
+    var search = 0;
+    for (;;)
+    {
+        // Find the next occurrance of .%.
+        var end = sexpr.indexOf(".%", search);
+        if (end === -1)
+            break;
 
-    this.destroy = Obj.bindFixed(ac.shutdown, ac);
-    this.reset = Obj.bindFixed(ac.hide, ac);
-    this.complete = Obj.bind(ac.complete, ac);
-    this.handleKeyPress = Obj.bind(ac.handleKeyPress, ac);
+        var start = getExpressionOffset(sexpr, end);
+        if (/^-?[0-9]*$/.test(expr.substring(start, end)))
+        {
+            // False alarm - the operator was actually a number and the modulo operator.
+            search = end + 1;
+        }
+        else
+        {
+            // Substitute "expr.%prop" with "scopeGetter(expr).prop", or, if used
+            // in a "new" expression, "(scopeGetter(expr)).prop" (so that the scope
+            // getter isn't used as a constructor). We don't want to use the second
+            // thing unconditionally though, because it messes with ASI.
+            var newPos = (start === 0 ? -1 : sexpr.lastIndexOf("new", start-1));
+            var hasNew = (newPos !== -1 && !/[a-zA-Z0-9_$.]/.test(sexpr.charAt(newPos-1)) &&
+                sexpr.substring(newPos + 3, start).trim() === "");
+            var subst = function(expr)
+            {
+                return expr.substr(0, start) + (hasNew ? "(" : "") + fname + "(" +
+                    expr.substring(start, end) + ")" + (hasNew ? ")" : "") + "." +
+                    expr.substr(end+2);
+            };
+            expr = subst(expr);
+            sexpr = subst(sexpr);
+
+            search = end + fname.length + (hasNew ? 5 : 3); // |(()).| or |().|
+        }
+    }
+    return expr;
+};
+
+// ********************************************************************************************* //
+// CodeMirror auto-completer
+
+function codeMirrorAutoComplete(context, allowGlobal, attemptedCompletionOut, sourceEditor, editor)
+{
+    var cur = editor.getCursor(), line = cur.line;
+    var token = editor.getTokenAt(cur);
+    if (["comment", "string", "string-2"].indexOf(token.type) !== -1)
+        return;
+
+    var offset = token.end;
+    var wholeLine = editor.getLine(line);
+    var value = wholeLine.substr(0, offset);
+
+    var options = {
+        includeCommandLineAPI: true,
+        includeCurrentScope: true,
+        multiLine: true,
+        get additionalGlobalCompletions()
+        {
+            return sourceEditor.getSurroundingVariablesFromCodeMirrorState(token.state);
+        }
+    };
+    var completer = new JSAutoCompleter(null, null, options);
+    var worked = completer.createCandidates(context, value, value.length, allowGlobal);
+    if (!worked)
+        return;
+
+    attemptedCompletionOut.attemptedCompletion = true;
+    if (!completer.completions)
+        return;
+
+    var applyCompletion = function(cm, data, completion)
+    {
+        cm = Wrapper.unwrapObject(cm);
+        completer.completions.index = completion.index;
+        var startOfLine = completer.getCompletionValue();
+        cm.setLine(line, startOfLine + wholeLine.substr(offset));
+        cm.setCursor(line, startOfLine.length);
+    };
+    var cmCompletions = [];
+    var list = completer.completions.list;
+    for (var i = 0; i < list.length; i++)
+    {
+        cmCompletions.push({
+            hint: applyCompletion,
+            text: list[i].name,
+            index: i
+        });
+    }
+
+    var completionIncludesToken = reJSChar.test(token.string.charAt(0));
+    var pos = {line: line, ch: completionIncludesToken ? token.start : token.end};
+    return {list: cmCompletions, from: pos, to: pos};
 }
 
 // ********************************************************************************************* //
@@ -661,15 +1097,16 @@ function EditorJSAutoCompleter(box, completionBox, options)
 /**
  * Try to find the position at which the expression to be completed starts.
  */
-function getExpressionOffset(command)
+function getExpressionOffset(command, start)
 {
-    var bracketCount = 0;
+    if (typeof start === "undefined")
+        start = command.length;
 
-    var start = command.length, instr = false;
+    var bracketCount = 0, instr = false;
 
     // When completing []-accessed properties, start instead from the last [.
-    var lastBr = command.lastIndexOf("[");
-    if (lastBr !== -1 && /^" *$/.test(command.substr(lastBr+1)))
+    var lastBr = command.lastIndexOf("[", start);
+    if (lastBr !== -1 && /^" *$/.test(command.substring(lastBr+1, start)))
         start = lastBr;
 
     for (var i = start-1; i >= 0; --i)
@@ -693,7 +1130,10 @@ function getExpressionOffset(command)
         else if (bracketCount === 0)
         {
             if (c === '"') instr = !instr;
-            else if (!instr && !reJSChar.test(c) && c !== ".")
+            else if (instr || reJSChar.test(c) || c === "." ||
+                (c === "%" && command[i-1] === "."))
+                ;
+            else
                 break;
         }
     }
@@ -701,7 +1141,8 @@ function getExpressionOffset(command)
 
     // The 'new' operator has higher precedence than function calls, so, if
     // present, it should be included if the expression contains a parenthesis.
-    if (i-4 >= 0 && command.indexOf("(", i) !== -1 && command.substr(i-4, 4) === "new ")
+    var ind = command.indexOf("(", i+1);
+    if (i-4 >= 0 && ind !== -1 && ind < start && command.substr(i-4, 4) === "new ")
     {
         i -= 4;
     }
@@ -720,10 +1161,10 @@ function getPropertyOffset(expr)
         return lastBr+2;
 
     var lastDot = expr.lastIndexOf(".");
-    if (lastDot !== -1)
-        return lastDot+1;
+    if (lastDot !== -1 && expr.charAt(lastDot+1) === "%")
+        return lastDot+2;
 
-    return 0;
+    return (lastDot === -1 ? 0 : lastDot+1);
 }
 
 /**
@@ -755,11 +1196,17 @@ function prevWord(str, from)
     return 0;
 }
 
+/**
+ * Check if a position 'pos', marking the start of a property name, is
+ * preceded by a function-declaring keyword.
+ */
 function isFunctionName(expr, pos)
 {
-    pos -= 9;
-    return (pos >= 0 && expr.substr(pos, 9) === "function " &&
-            (pos === 0 || !reJSChar.test(expr.charAt(pos-1))));
+    var ind = prevNonWs(expr, pos);
+    if (ind === -1 || !reJSChar.test(expr.charAt(ind)))
+        return false;
+    var word = expr.substring(prevWord(expr, ind), ind+1);
+    return (word === "function" || word === "get" || word === "set");
 }
 
 function bwFindMatchingParen(expr, from)
@@ -780,27 +1227,28 @@ function bwFindMatchingParen(expr, from)
  * Check if a '/' at the end of 'expr' would be a regex or a division.
  * May also return null if the expression seems invalid.
  */
-function endingDivIsRegex(expr)
+function endingDivIsRegex(expr, multiLine)
 {
-    var kwActions = ["throw", "return", "in", "instanceof", "delete", "new",
-        "do", "else", "typeof", "void", "yield"];
     var kwCont = ["function", "if", "while", "for", "switch", "catch", "with"];
 
-    var ind = prevNonWs(expr, expr.length), ch = (ind === -1 ? "{" : expr.charAt(ind));
+    var ind = prevNonWs(expr, expr.length);
+    if (ind === -1 && multiLine)
+        return false;
+    var ch = (ind === -1 ? "{" : expr.charAt(ind));
     if (reJSChar.test(ch))
     {
         // Test if the previous word is a keyword usable like 'kw <expr>'.
         // If so, we have a regex, otherwise, we have a division (a variable
         // or literal being divided by something).
         var w = expr.substring(prevWord(expr, ind), ind+1);
-        return (kwActions.indexOf(w) !== -1);
+        return (kwActions.indexOf(w) !== -1 || w === "do" || w === "else");
     }
     else if (ch === ")")
     {
         // We have a regex in the cases 'if (...) /blah/' and 'function name(...) /blah/'.
         ind = bwFindMatchingParen(expr, ind);
         if (ind === -1)
-            return null;
+            return (multiLine ? false : null);
         ind = prevNonWs(expr, ind);
         if (ind === -1)
             return false;
@@ -825,7 +1273,12 @@ function isObjectDecl(expr, pos)
     if (ind === -1)
         return false;
     var ch = expr.charAt(ind);
-    return !(ch === ")" || ch === "{" || ch === "}" || ch === ";");
+    if (ch === ")" || ch === "{" || ch === "}" || ch === ";")
+        return false;
+    if (!reJSChar.test(ch))
+        return true;
+    var w = expr.substring(prevWord(expr, ind), ind+1);
+    return (kwActions.indexOf(w) !== -1);
 }
 
 function isCommaProp(expr, start)
@@ -839,7 +1292,7 @@ function isCommaProp(expr, start)
     return isValidProperty(prop);
 }
 
-function simplifyExpr(expr)
+function simplifyExpr(expr, multiLine)
 {
     var ret = "", len = expr.length, instr = false, strend, inreg = false, inclass, brackets = [];
 
@@ -900,26 +1353,45 @@ function simplifyExpr(expr)
             }
             else if (ch === "/")
             {
-                var re = endingDivIsRegex(ret);
-                if (re === null)
-                    return null;
-                if (re)
+                if (i + 1 < expr.length && /[\/\*]/.test(expr.charAt(i + 1)))
                 {
-                    inreg = true;
-                    ret += '"';
+                    var singleLineComment = (expr.charAt(i + 1) === "/");
+                    ret += "  ";
+                    i += 2;
+                    var re = singleLineComment ? /^\n/ : /\*\//;
+                    while (i < len && !re.test(expr.substr(i, 2)))
+                    {
+                        ret += " ";
+                        i++;
+                    }
+                    if (!singleLineComment && i < len)
+                    {
+                        ret += "  ";
+                        i += 2;
+                    }
+                    i--;
                 }
                 else
-                    ret += "/";
+                {
+                    var re = endingDivIsRegex(ret, multiLine);
+                    if (re === null)
+                        return null;
+                    if (re)
+                    {
+                        inreg = true;
+                        ret += '"';
+                    }
+                    else
+                        ret += "/";
+                }
             }
             else
             {
                 if (reOpenBracket.test(ch))
                     brackets.push(ch);
-                else if (reCloseBracket.test(ch))
+                else if (reCloseBracket.test(ch) && brackets.length)
                 {
                     // Check for mismatched brackets
-                    if (!brackets.length)
-                        return null;
                     var br = brackets.pop();
                     if (br === "(" && ch !== ")")
                         return null;
@@ -937,14 +1409,14 @@ function simplifyExpr(expr)
 }
 
 // Check if auto-completion should be killed.
-function killCompletions(expr, origExpr)
+function killCompletions(expr, origExpr, force)
 {
-    // Make sure there is actually something to complete at the end.
     if (expr.length === 0)
-        return true;
+        return !force;
 
     if (reJSChar.test(expr[expr.length-1]) ||
-            expr[expr.length-1] === ".")
+            expr.slice(-1) === "." ||
+            expr.slice(-2) === ".%")
     {
         // An expression at the end - we're fine.
     }
@@ -957,7 +1429,7 @@ function killCompletions(expr, origExpr)
             // Array completions - we're fine.
         }
         else {
-            return true;
+            return !force;
         }
     }
 
@@ -993,49 +1465,20 @@ function killCompletions(expr, origExpr)
     if (bwp !== -1)
     {
         var ind = prevNonWs(expr, bwp);
-        if (ind !== -1)
+        if (ind !== -1 && reJSChar.test(expr.charAt(ind)))
         {
             var stw = prevWord(expr, ind);
             if (expr.substring(stw, ind+1) === "function")
                 return true;
-            ind = prevNonWs(expr, stw);
-            if (ind !== -1 && expr.substring(prevWord(expr, ind), ind+1) === "function")
+            if (isFunctionName(expr, stw))
                 return true;
         }
     }
     return false;
 }
 
-function adjustCompletionOnAccept(preParsed, preExpr, property)
-{
-    var res = preParsed + preExpr + property;
-
-    // Don't adjust index completions.
-    if (/^\[['"]$/.test(preExpr.slice(-2)))
-        return res;
-
-    if (!isValidProperty(property))
-    {
-        // The property name is actually invalid in free form, so replace
-        // it with array syntax.
-
-        if (preExpr)
-        {
-            res = preParsed + preExpr.slice(0, -1);
-        }
-        else
-        {
-            // Global variable access - assume the variable is a member of 'window'.
-            res = preParsed + "window";
-        }
-        res += '["' + Str.escapeJS(property) + '"]';
-    }
-    return res;
-}
-
 // Types the autocompletion knows about, some of their non-enumerable properties,
-// and the return types of some member functions, included in the Firebug.CommandLine
-// object to make it more easily extensible.
+// and the return types of some member functions.
 
 var AutoCompletionKnownTypes = {
     "void": {
@@ -1220,9 +1663,8 @@ var AutoCompletionKnownTypes = {
         "tan": "|Number"
     },
     "Number": {
-        // There are also toFixed and valueOf, but they are left out because
-        // they steal focus from toString by being shorter (in the case of
-        // toFixed), and because they are used very seldom.
+        "valueOf": "|Number",
+        "toFixed": "|String",
         "toExponential": "|String",
         "toPrecision": "|String",
         "toLocaleString": "|String",
@@ -1232,9 +1674,9 @@ var AutoCompletionKnownTypes = {
 
 var LinkType = {
     "PROPERTY": 0,
-    "INDEX": 1,
-    "CALL": 2,
-    "SAFECALL": 3,
+    "SCOPED_VARS": 1,
+    "INDEX": 2,
+    "CALL": 3,
     "RETVAL_HEURISTIC": 4
 };
 
@@ -1251,18 +1693,6 @@ function getKnownTypeInfo(r)
     if (r.charAt(0) === "|")
         return {"val": "Function", "ret": r.substr(1)};
     return {"val": r};
-}
-
-function getFakeCompleteKeys(name)
-{
-    var ret = [], type = getKnownType(name);
-    if (!type)
-        return ret;
-    for (var prop in type) {
-        if (prop.substr(0, 4) !== "_fb_")
-            ret.push(prop);
-    }
-    return ret;
 }
 
 function eatProp(expr, start)
@@ -1298,90 +1728,264 @@ function getTypeExtractionExpression(command)
     return ret;
 }
 
-function sortUnique(ar)
+/**
+ * Compare two property names a and b with a custom sort order. The comparison
+ * is lexicographical, but treats _ as higher than other letters in the
+ * beginning of the word, so that:
+ *  $ < AutoCompleter < add_widget < additive < _ < _priv < __proto__
+ * @return -1, 0 or 1 depending on whether (a < b), (a == b) or (a > b).
+ */
+function comparePropertyNames(lhs, rhs)
 {
-    ar = ar.slice();
-    ar.sort();
-    var ret = [];
+    var len = Math.min(lhs.length, rhs.length);
+    for (var i = 0; i < len; ++i)
+    {
+        var u1 = (lhs.charAt(i) === "_");
+        var u2 = (rhs.charAt(i) === "_");
+        if (!u1 && !u2)
+            break;
+        if (!u1 || !u2)
+            return (u1 ? 1 : -1);
+    }
+
+    if (lhs < rhs)
+        return -1;
+    return (lhs === rhs ? 0 : 1);
+}
+
+// See autoCompleteEval. This reorders a sorted array to look as if it had been
+// sorted by comparePropertyNames.
+function reorderPropertyNames(ar)
+{
+    var buckets = [];
     for (var i = 0; i < ar.length; ++i)
     {
-        if (i && ar[i-1] === ar[i])
-            continue;
-        ret.push(ar[i]);
+        var s = ar[i];
+        if (s.charAt(0) === "_")
+        {
+            var count = 0;
+            while (count < s.length && s.charAt(count) === "_")
+                ++count;
+            --count;
+            if (!buckets[count])
+                buckets[count] = [];
+            buckets[count].push(s);
+        }
     }
+
+    if (!buckets.length)
+        return ar;
+
+    var res = [];
+    for (var i = 0; i < ar.length; ++i)
+    {
+        if (ar[i].charAt(0) !== "_")
+            res.push(ar[i]);
+    }
+    for (var i = 0; i < buckets.length; ++i)
+    {
+        var ar2 = buckets[i];
+        if (ar2)
+            res.push.apply(res, ar2);
+    }
+    return res;
+}
+
+function propertiesToHide(expr, obj)
+{
+    var ret = [];
+
+    // __{define,lookup}[SG]etter__ appear as own properties on lots of DOM objects.
+    ret.push("__defineGetter__", "__defineSetter__",
+        "__lookupGetter__", "__lookupSetter__");
+
+    // function.caller/arguments are deprecated and ugly, and don't hold values when
+    // evaluated from the command line.
+    if (typeof obj === "function")
+        ret.push("caller", "arguments");
+
+    if (Object.prototype.toString.call(obj) === "[object String]")
+    {
+        // Unused, cluttery.
+        ret.push("quote", "bold", "italics", "fixed", "fontsize", "fontcolor",
+            "link", "anchor", "strike", "small", "big", "blink", "sup", "sub");
+    }
+
+    if (expr === "" || expr === "window.")
+    {
+        // Internal Firefox things.
+        ret.push("getInterface", "Components", "XPCNativeWrapper",
+            "InstallTrigger", "WindowInternal", "DocumentXBL",
+            "startProfiling", "stopProfiling", "pauseProfilers",
+            "resumeProfilers", "dumpProfile", "netscape",
+            "BoxObject", "BarProp", "BrowserFeedWriter", "ChromeWindow",
+            "ElementCSSInlineStyle", "JSWindow", "NSEditableElement",
+            "NSRGBAColor", "NSEvent", "NSXPathExpression", "ToString",
+            "OpenWindowEventDetail", "Parser", "ParserJS", "Rect",
+            "RGBColor", "ROCSSPrimitiveValue", "RequestService",
+            "PaintRequest", "PaintRequestList", "WindowUtils",
+            "GlobalPropertyInitializer", "GlobalObjectConstructor"
+        );
+    }
+
+    // Old and ugly.
+    if (expr === "document.")
+        ret.push("fgColor", "vlinkColor", "linkColor");
+    if (expr === "document.body.")
+        ret.push("link", "aLink", "vLink");
+
+    // Rather universal and feel like built-ins.
+    ret.push("constructor", "QueryInterface");
+
     return ret;
+}
+
+function setCompletionsFromObject(out, object, context)
+{
+    // 'object' is a user-level, non-null object.
+    try
+    {
+        var isObjectPrototype = function(obj)
+        {
+            // Check if an object is "Object.prototype". This isn't as simple
+            // as 'obj === context.window.wrappedJSObject.Object.prototype' due
+            // to cross-window properties, nor just '!Object.getPrototypeOf(obj)'
+            // because of Object.create.
+            return !Object.getPrototypeOf(obj) && "hasOwnProperty" in obj;
+        };
+
+        var obj = object;
+        while (obj !== null)
+        {
+            var target = (isObjectPrototype(obj) ?
+                    out.hiddenCompletions : out.completions);
+            if (Array.isArray(obj) && obj.length > 4000)
+            {
+                // The object is a large array. To avoid RangeErrors from
+                // `target.push.apply` and a slow `Object.getOwnPropertyNames`,
+                // we just skip this level ("length" is also on the prototype,
+                // and numeric properties would get hidden later anyway).
+            }
+            else
+            {
+                target.push.apply(target, Object.getOwnPropertyNames(obj));
+            }
+            obj = Object.getPrototypeOf(obj);
+        }
+
+        // As a special case, when completing "Object.prototype." no properties
+        // should be hidden.
+        if (isObjectPrototype(object))
+        {
+            out.completions = out.hiddenCompletions;
+            out.hiddenCompletions = [];
+        }
+        else
+        {
+            // Hide a list of well-chosen annoying properties.
+            var hide = propertiesToHide(out.spreExpr, object);
+            var hideMap = Object.create(null);
+            for (var i = 0; i < hide.length; ++i)
+                hideMap[hide[i]] = 1;
+
+            var newCompletions = [];
+            out.completions.forEach(function(prop)
+            {
+                if (prop in hideMap)
+                    out.hiddenCompletions.push(prop);
+                else
+                    newCompletions.push(prop);
+            });
+            out.completions = newCompletions;
+        }
+
+        // Firefox hides __proto__ - add it back.
+        if ("__proto__" in object)
+            out.hiddenCompletions.push("__proto__");
+    }
+    catch (exc)
+    {
+        Trace.sysout("autoCompleter.setCompletionsFromObject failed", exc);
+    }
+}
+
+function setCompletionsFromScope(out, object, context)
+{
+    out.completions = ClosureInspector.getClosureVariablesList(object, context);
+
+    // Hide "arguments"; it almost never holds a value.
+    out.completions = Arr.unique(out.completions);
+    var ind = out.completions.indexOf("arguments");
+    if (ind !== -1)
+    {
+        out.completions.splice(ind, 1);
+        out.hiddenCompletions.push("arguments");
+    }
+}
+
+function getNewlyDeclaredNames(js)
+{
+    // XXXsimon: In the future, machinery from issue 5291 could perhaps replace this.
+    var re = /\b[a-zA-Z_$][a-zA-Z0-9_$]*\b/g;
+    var ar = [], match;
+    while ((match = re.exec(js)) !== null)
+    {
+        var afterCh = js.substr(re.lastIndex).trimLeft()[0];
+        if (/[.%]/.test(js.charAt(match.index - 1)) || !/^[=,;\(\)]/.test(afterCh))
+            continue;
+        if (afterCh === "(" && !js.slice(0, match.index).endsWith("function "))
+            continue;
+        if (kwAll.indexOf(match[0]) !== -1)
+            continue;
+
+        ar.push(match[0]);
+    }
+    return ar;
 }
 
 function propChainBuildComplete(out, context, tempExpr, result)
 {
-    var complete = null, command = null;
+    if (out.scopeCompletion)
+    {
+        if (tempExpr.fake)
+            return;
+        if (typeof result !== "object" && typeof result !== "function")
+            return;
+        setCompletionsFromScope(out, result, context);
+        return;
+    }
+
+    var done = function(result)
+    {
+        if (result == null)
+            return;
+
+        if (typeof result !== "object" && typeof result !== "function")
+        {
+            // To avoid slow completions, convert strings to length 0 (numeric
+            // properties are hidden anyway).
+            if (typeof result === "string")
+                result = "";
+
+            // Convert the primitive into its scope's matching object type.
+            result = Wrapper.unwrapObject(out.window.Object(result));
+        }
+        setCompletionsFromObject(out, result, context);
+    };
+
     if (tempExpr.fake)
     {
         var name = tempExpr.value.val;
-        complete = getFakeCompleteKeys(name);
-        if (!getKnownType(name)._fb_ignorePrototype)
-            command = name + ".prototype";
-    }
-    else
-    {
-        if (typeof result === "string")
-        {
-            // Strings only have indices as properties, use the fake object
-            // completions instead.
-            tempExpr.fake = true;
-            tempExpr.value = getKnownTypeInfo("String");
-            propChainBuildComplete(out, context, tempExpr);
+        if (getKnownType(name)._fb_ignorePrototype)
             return;
-        }
-        else if (FirebugReps.Arr.isArray(result, context.window))
-            complete = nonNumericKeys(result);
-        else
-            complete = Arr.keys(result);
-        command = getTypeExtractionExpression(tempExpr.command);
-    }
-
-    var done = function()
-    {
-        if (out.indexCompletion)
-        {
-            complete = complete.map(function(x)
-            {
-                x = (out.indexQuoteType === '"') ? Str.escapeJS(x): Str.escapeSingleQuoteJS(x);
-                return x + out.indexQuoteType + "]";
-            });
-        }
-
-        // Properties may be taken from several sources, so filter out duplicates.
-        out.complete = sortUnique(complete);
-    };
-
-    if (command === null)
-    {
-        done();
+        Firebug.CommandLine.evaluate(name + ".prototype", context, context.thisValue, null,
+            done, function failed() {},
+            {noStateChange: true}
+        );
     }
     else
     {
-        Firebug.CommandLine.evaluate(command, context, context.thisValue, null,
-            function found(result, context)
-            {
-                if (tempExpr.fake)
-                {
-                    complete = complete.concat(Arr.keys(result));
-                }
-                else
-                {
-                    if (typeof result === "string" && getKnownType(result))
-                    {
-                        complete = complete.concat(getFakeCompleteKeys(result));
-                    }
-                }
-                done();
-            },
-            function failed(result, context)
-            {
-                done();
-            }
-        );
+        done(result);
     }
 }
 
@@ -1416,6 +2020,10 @@ function evalPropChainStep(step, tempExpr, evalChain, out, context)
             else
                 return;
         }
+        else
+        {
+            return;
+        }
         evalPropChainStep(step+1, tempExpr, evalChain, out, context);
     }
     else
@@ -1430,19 +2038,28 @@ function evalPropChainStep(step, tempExpr, evalChain, out, context)
                 tempExpr.thisCommand = tempExpr.command;
                 tempExpr.command += "." + link.name;
             }
+            else if (type === LinkType.SCOPED_VARS)
+            {
+                tempExpr.thisCommand = "window";
+                tempExpr.command += ".%" + link.name;
+            }
             else if (type === LinkType.INDEX)
             {
                 tempExpr.thisCommand = "window";
                 tempExpr.command += "[" + link.cont + "]";
             }
-            else if (type === LinkType.SAFECALL)
-            {
-                tempExpr.thisCommand = "window";
-                tempExpr.command += "(" + link.origCont + ")";
-            }
             else if (type === LinkType.CALL)
             {
-                if (link.name === "")
+                if (link.origCont !== null &&
+                     (link.name.substr(0, 3) === "get" ||
+                      (link.name.charAt(0) === "$" && link.cont.indexOf(",") === -1)))
+                {
+                    // Names beginning with get or $ are almost always getters, so
+                    // assume we can safely just call it.
+                    tempExpr.thisCommand = "window";
+                    tempExpr.command += "(" + link.origCont + ")";
+                }
+                else if (!link.name)
                 {
                     // We cannot know about functions without name; try the
                     // heuristic directly.
@@ -1450,33 +2067,25 @@ function evalPropChainStep(step, tempExpr, evalChain, out, context)
                     evalPropChainStep(step, tempExpr, evalChain, out, context);
                     return;
                 }
-
-                funcCommand = getTypeExtractionExpression(tempExpr.thisCommand);
-                break;
+                else
+                {
+                    funcCommand = getTypeExtractionExpression(tempExpr.thisCommand);
+                    break;
+                }
             }
             else if (type === LinkType.RETVAL_HEURISTIC)
             {
-                if (link.origCont !== null &&
-                     (link.name.substr(0, 3) === "get" ||
-                      (link.name.charAt(0) === "$" && link.cont.indexOf(",") === -1)))
-                {
-                    // Names beginning with get or $ are almost always getters, so
-                    // assume it is a safecall and start over.
-                    link.type = LinkType.SAFECALL;
-                    evalPropChainStep(step, tempExpr, evalChain, out, context);
-                    return;
-                }
                 funcCommand = "Function.prototype.toString.call(" + tempExpr.command + ")";
                 break;
             }
             ++step;
         }
 
-        var func = (funcCommand !== null), command = (func ? funcCommand : tempExpr.command);
+        var isFunc = (funcCommand !== null), command = (isFunc ? funcCommand : tempExpr.command);
         Firebug.CommandLine.evaluate(command, context, context.thisValue, null,
             function found(result, context)
             {
-                if (func)
+                if (isFunc)
                 {
                     if (type === LinkType.CALL)
                     {
@@ -1549,10 +2158,14 @@ function evalPropChainStep(step, tempExpr, evalChain, out, context)
                         {
                             var rest = result.substr(newPos + 11),
                                 epos = rest.search(/[^a-zA-Z0-9_$.]/);
-                            if (epos !== -1)
+                            if (epos !== -1 && /[; \t\n(}]/.test(rest.charAt(epos)))
                             {
                                 rest = rest.substring(0, epos);
-                                tempExpr.command = rest + ".prototype";
+                                var func = tempExpr.command, expr = rest + ".prototype";
+                                tempExpr.command = "(function() { " +
+                                    "try { return " + func + ".%" + expr + "; } " +
+                                    "catch(e) { return " + expr + "; } " +
+                                "})()";
                                 evalPropChainStep(step+1, tempExpr, evalChain, out, context);
                                 return;
                             }
@@ -1564,7 +2177,8 @@ function evalPropChainStep(step, tempExpr, evalChain, out, context)
                     propChainBuildComplete(out, context, tempExpr, result);
                 }
             },
-            function failed(result, context) { }
+            function failed() {},
+            {noStateChange: true}
         );
     }
 }
@@ -1620,19 +2234,29 @@ function evalPropChain(out, preExpr, origExpr, context)
             if (ch === ".")
             {
                 // Property access
-                var nextLink = eatProp(preExpr, linkStart+1);
-                lastProp = preExpr.substring(linkStart+1, nextLink);
+                var scope = (preExpr.charAt(linkStart+1) === "%");
+                linkStart += (scope ? 2 : 1);
+                var nextLink = eatProp(preExpr, linkStart);
+                lastProp = preExpr.substring(linkStart, nextLink);
                 linkStart = nextLink;
-                evalChain.push({"type": LinkType.PROPERTY, "name": lastProp});
+                evalChain.push({
+                    "type": (scope ? LinkType.SCOPED_VARS : LinkType.PROPERTY),
+                    "name": lastProp
+                });
             }
             else if (ch === "(")
             {
                 // Function call. Save the function name and the arguments if
-                // they are safe to evaluate.
+                // they are safe to evaluate. Currently literals and single
+                // variables not occurring previously on the command line are
+                // treated as safe.
                 var endCont = matchingBracket(preExpr, linkStart);
                 var cont = preExpr.substring(linkStart+1, endCont), origCont = null;
-                if (reLiteralExpr.test(cont))
+                if (reLiteralExpr.test(cont) || (/^[a-zA-Z_$][a-zA-Z0-9_$]*$/.test(cont) &&
+                    preExpr.lastIndexOf(cont, linkStart) === -1))
+                {
                     origCont = origExpr.substring(linkStart+1, endCont);
+                }
                 linkStart = endCont + 1;
                 evalChain.push({
                     "type": LinkType.CALL,
@@ -1671,11 +2295,21 @@ function evalPropChain(out, preExpr, origExpr, context)
     return true;
 }
 
-function autoCompleteEval(context, preExpr, spreExpr, includeCurrentScope)
-{
-    var out = {};
 
-    out.complete = [];
+var CompletionType = {
+    "NORMAL": 0,
+    "API": 1
+};
+
+function autoCompleteEval(context, preExpr, spreExpr, preParsed, spreParsed, options)
+{
+    var out = {
+        spreExpr: spreExpr,
+        completions: [],
+        hiddenCompletions: [],
+        window: context.getCurrentGlobal()
+    };
+    var indexCompletion = false;
 
     try
     {
@@ -1685,33 +2319,35 @@ function autoCompleteEval(context, preExpr, spreExpr, includeCurrentScope)
 
             // In case of array indexing, remove the bracket and set a flag to
             // escape completions.
-            out.indexCompletion = false;
+            out.scopeCompletion = false;
             var len = spreExpr.length;
             if (len >= 2 && spreExpr[len-2] === "[" && spreExpr[len-1] === '"')
             {
-                out.indexCompletion = true;
+                indexCompletion = true;
                 out.indexQuoteType = preExpr[len-1];
-                spreExpr = spreExpr.substr(0, len-2);
-                preExpr = preExpr.substr(0, len-2);
+                len -= 2;
+            }
+            else if (spreExpr.slice(-2) === ".%")
+            {
+                out.scopeCompletion = true;
+                len -= 2;
             }
             else
             {
-                // Remove the trailing dot (if there is one)
-                var lastDot = spreExpr.lastIndexOf(".");
-                if (lastDot !== -1)
-                {
-                    spreExpr = spreExpr.substr(0, lastDot);
-                    preExpr = preExpr.substr(0, lastDot);
-                }
+                len -= 1;
             }
+            spreExpr = spreExpr.substr(0, len);
+            preExpr = preExpr.substr(0, len);
 
-            if (FBTrace.DBG_COMMANDLINE)
-                FBTrace.sysout("commandLine.autoCompleteEval pre:'" + preExpr +
+            if (Trace.active)
+            {
+                Trace.sysout("commandLine.autoCompleteEval pre:'" + preExpr +
                     "' spre:'" + spreExpr + "'.");
+            }
 
             // Don't auto-complete '.'.
             if (spreExpr === "")
-                return out.complete;
+                return out;
 
             evalPropChain(out, spreExpr, preExpr, context);
         }
@@ -1719,35 +2355,86 @@ function autoCompleteEval(context, preExpr, spreExpr, includeCurrentScope)
         {
             // Complete variables from the local scope
 
-            var contentView = Wrapper.getContentView(context.window);
-            if (context.stopped && includeCurrentScope)
-            {
-                out.complete = Firebug.Debugger.getCurrentFrameKeys(context);
-            }
-            else if (contentView && contentView.Window &&
-                contentView.constructor.toString() === contentView.Window.toString())
-                // Cross window type pseudo-comparison
-            {
-                out.complete = Arr.keys(contentView); // return is safe
+            var contentView = Wrapper.getContentView(out.window);
+            setCompletionsFromObject(out, contentView, context);
 
-                // Add some known window properties
-                out.complete = out.complete.concat(getFakeCompleteKeys("Window"));
-            }
-            else  // hopefully sandbox in Chromebug
+            if (context.stopped && options.includeCurrentScope)
             {
-                out.complete = Arr.keys(context.global);
+                var localVars = Firebug.Debugger.getCurrentFrameKeys(context);
+                out.completions = out.completions.concat(localVars, ["this"]);
             }
+        }
 
-            // Sort the completions, and avoid duplicates.
-            out.complete = sortUnique(out.complete);
+        if (options.additionalCompletions)
+            out.completions.push.apply(out.completions, options.additionalCompletions);
+
+        if (indexCompletion)
+        {
+            // If we are doing index-completions, add "] to everything.
+            var convertQuotes = function(x)
+            {
+                x = (out.indexQuoteType === '"') ? Str.escapeJS(x): Str.escapeSingleQuoteJS(x);
+                return x + out.indexQuoteType + "]";
+            };
+
+            out.completions = out.completions.map(convertQuotes);
+            out.hiddenCompletions = out.hiddenCompletions.map(convertQuotes);
+        }
+        else if (out.completions.indexOf("length") !== -1 && out.completions.indexOf("0") !== -1)
+        {
+            // ... otherwise remove numeric keys from array-like things.
+            var rePositiveNumber = /^[1-9][0-9]*$/;
+            out.completions = out.completions.filter(function(x)
+            {
+                return !rePositiveNumber.test(x) && x !== "0";
+            });
+        }
+
+        if (!spreExpr)
+        {
+            // For global completions, hide results starting with a digit, since they conflict
+            // with typing numbers. An interested user would type 'window.<name>', anyway.
+            var reValid = /^[^0-9]/;
+            out.completions = out.completions.filter((x) => reValid.test(x));
+        }
+
+        // Sort the completions, and avoid duplicates.
+        // Note: If we make it possible to show both regular and hidden completions
+        // at the same time, completions should shadow hiddenCompletions here.
+        // XXX Normally we'd just do sortUnique(completions, comparePropertyNames),
+        // but JSD makes that slow (issue 6256). Sort and do manual reordering instead.
+        out.completions = reorderPropertyNames(Arr.sortUnique(out.completions));
+        out.hiddenCompletions = reorderPropertyNames(Arr.sortUnique(out.hiddenCompletions));
+
+        var wrap = function(x)
+        {
+            return {type: CompletionType.NORMAL, name: x};
+        };
+        out.completions = out.completions.map(wrap);
+        out.hiddenCompletions = out.hiddenCompletions.map(wrap);
+
+        // Add things from the Command Line API, if we are signalled to,
+        // and it is not unavailable due to being stopped in the debugger
+        // (issue 5321).
+        if (!spreExpr && options.includeCommandLineAPI)
+        {
+            var usedNames = new Set();
+            out.completions.forEach(function(completion)
+            {
+                usedNames.add(completion.name);
+            });
+            CommandLineExposed.getAutoCompletionList().forEach(function(name)
+            {
+                if (!usedNames.has(name))
+                    out.completions.push({type: CompletionType.API, name: name});
+            });
         }
     }
     catch (exc)
     {
-        if (FBTrace.DBG_ERRORS && FBTrace.DBG_COMMANDLINE)
-            FBTrace.sysout("commandLine.autoCompleteEval FAILED", exc);
+        TraceError.sysout("commandLine.autoCompleteEval FAILS", exc);
     }
-    return out.complete;
+    return out;
 }
 
 var reValidJSToken = /^[A-Za-z_$][A-Za-z_$0-9]*$/;
@@ -1765,26 +2452,6 @@ function isValidProperty(value)
     return reValidJSToken.test(value);
 }
 
-const rePositiveNumber = /^[1-9][0-9]*$/;
-function nonNumericKeys(map)  // keys will be on user-level window objects
-{
-    var keys = [];
-    try
-    {
-        for (var name in map)  // enumeration is safe
-        {
-            if (! (name === "0" || rePositiveNumber.test(name)) )
-                keys.push(name);
-        }
-    }
-    catch (exc)
-    {
-        // Sometimes we get exceptions trying to iterate properties
-    }
-
-    return keys;  // return is safe
-}
-
 function setCursorToEOL(input)
 {
     // textbox version, https://developer.mozilla.org/en/XUL/Property/inputField
@@ -1795,7 +2462,10 @@ function setCursorToEOL(input)
 // ********************************************************************************************* //
 // Registration
 
-return Firebug.JSAutoCompleter;
+JSAutoCompleter.codeMirrorAutoComplete = codeMirrorAutoComplete;
+Firebug.JSAutoCompleter = JSAutoCompleter;
+
+return JSAutoCompleter;
 
 // ********************************************************************************************* //
 });

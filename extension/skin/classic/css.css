@@ -15,12 +15,20 @@
     color: #000000;
 }
 
+.cssRulesListBox > .cssRule {
+    padding-left: 2em;
+}
+
 .cssRule:first-child {
     margin-top: 6px;
 }
 
 .cssElementRuleContainer {
     position: relative;
+}
+
+.cssElementRuleContainer > .objectLink {
+    -moz-user-select: none;
 }
 
 .cssHead {
@@ -37,47 +45,65 @@
 }
 
 .cssPropName {
-    color: DarkGreen;
+    color: darkgreen;
 }
 
-.cssPropValue {
-    color: DarkBlue;
+.cssPropValue,
+.cssFontPropValue {
+    color: darkblue;
+}
+
+.cssPropValueUnused,
+.cssFontPropSeparator,
+.cssParentMatch {
+    color: #787878;
 }
 
 .cssOverridden > .cssPropName,
-.cssOverridden > .cssPropValue {
+.cssOverridden > .cssPropValue,
+.cssOverridden > .selectorName,
+.cssOverridden > td > .stylePropValue {
     text-decoration: line-through;
 }
 
-.computedStylesGroup table {
-  display: none;
+.computedStyleTable,
+.matchedSelectorsTable {
+    width: 100%;
+    border-spacing: 0;
 }
 
-.computedStylesGroup.opened table {
-  display: block;
+.computedStylesGroup > .computedStyleTable {
+    display: none;
+}
+
+.computedStylesGroup.opened > .computedStyleTable {
+    display: table;
 }
 
 .cssInheritHeader, .cssComputedHeader {
-  position: relative;
+    position: relative;
+    -moz-user-select: none;
 }
 
-.cssComputedHeader {
-  cursor: pointer;
+.cssComputedHeader,
+.computedStyle.hasSelectors {
+    cursor: pointer;
+}
+
+.computedStyle.hasSelectors > .stylePropName {
+    background-position: 4px 4px !important;
+}
+
+.computedStylesGroup > .computedStyleTable > tbody > .computedStyle.hasSelectors > .stylePropName {
+    background-position: 10px 4px !important;
 }
 
 .computedStylesGroup > .cssComputedHeader {
-  margin: 0;
+    margin: 0;
 }
 
-.computedStylesGroup.opened > .cssComputedHeader {
-  margin: 0 0 4px;
-}
-
-.cssComputedHeader > .twisty {
-  background-position: 4px 3px !important;
-}
-
-.cssInheritedRule {
+.computedStylesGroup.hidden {
+    display: none;
 }
 
 .cssInheritLabel,
@@ -90,26 +116,79 @@
     margin-left: 14px;
 }
 
-.cssRule .objectLink-sourceLink {
+.computedStyle:not(:nth-last-child(2)) > td,
+.computedStyle:nth-last-child(2).opened > td,
+.computedStyle:not(:nth-last-child(2)) + .matchedSelectors .styleSelector > td,
+.computedStyle:nth-last-child(2) + .matchedSelectors .styleSelector:not(:last-child) > td {
+    border-bottom: 1px solid #EFEFEF;
+}
+
+.computedStyleRow > td {
+    padding-top: 2px;
+    padding-bottom: 2px;
+}
+
+.selectorName {
+    width: 160px;
+    -moz-padding-start: 24px;
+}
+
+.stylePropName {
+    width: 160px;
+    vertical-align: top;
+    font-weight: bold;
+    padding: 0 4px 0 24px;
+}
+
+.styleSelector > td > .stylePropValue {
+    padding-left: 3px;
+}
+
+.propValue {
+    width: 140px;
+}
+
+.matchedSelectors {
+    display: none;
+}
+
+.computedStyle.opened + .matchedSelectors {
+    display: table-row;
+}
+
+.styleSourceLink > .objectLink-sourceLink {
+    position: relative;
+    top: 0;
+    left: 0;
+    padding: 0;
+    text-align: right;
+}
+
+.cssElementRuleContainer > .objectLink-sourceLink {
     top: 0;
 }
 
-.cssProp.editGroup:hover {
-    background: transparent url(chrome://firebug/skin/disable.png) no-repeat 2px 1px;
+.cssProp:-moz-any(.editGroup:hover,
+                  .disabledStyle) > .cssPropIndent {
+    background: transparent url(chrome://firebug/skin/disable.svg) no-repeat 2px center;
 }
 
-.cssProp.editGroup > span:first-child {
+.cssProp.editGroup > .cssPropIndent {
+    display: inline-block;
     cursor: pointer;
 }
 
+.cssProp.disabledStyle:not(:hover) > .cssPropIndent {
+    filter: url(resource://firebugui/filters.svg#grayscale);
+}
+
 .cssProp.disabledStyle {
-    background: transparent url(chrome://firebug/skin/disableHover.png) no-repeat 2px 1px;
-    opacity: 1;
     color: #CCCCCC;
 }
 
 .cssProp.disabledStyle > .cssPropName,
-.cssProp.disabledStyle > .cssPropValue {
+.cssProp.disabledStyle > .cssPropValue,
+.cssProp.disabledStyle > .cssPropValue span {
     color: inherit;
 }
 
@@ -118,21 +197,7 @@
     display: none;
 }
 
-.cssPropValue.editing {
-    white-space: nowrap;
-}
-
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-.stylePropName {
-    font-weight: bold;
-    padding: 0 4px 4px 4px;
-    width: 50%;
-}
-
-.stylePropValue {
-    width: 50%;
-}
 
 .useA11y .a11yCSSView .focusRow:focus {
     outline: none;
@@ -156,10 +221,10 @@
 .infoTipColorBox {
     background-color: #C8C8C8;
     background-image:
-        -moz-linear-gradient(45deg, #A0A0A0 25%, transparent 25%),
-        -moz-linear-gradient(-45deg, #A0A0A0 25%, transparent 25%),
-        -moz-linear-gradient(45deg, transparent 75%, #A0A0A0 75%),
-        -moz-linear-gradient(-45deg, transparent 75%, #A0A0A0 75%);
+        linear-gradient(45deg, #A0A0A0 25%, rgba(160, 160, 160, 0) 25%),
+        linear-gradient(135deg, #A0A0A0 25%, rgba(160, 160, 160, 0) 25%),
+        linear-gradient(45deg, rgba(160, 160, 160, 0) 75%, #A0A0A0 75%),
+        linear-gradient(135deg, rgba(160, 160, 160, 0) 75%, #A0A0A0 75%);
     background-size: 16px 16px;
     background-position:0 0, 8px 0, 8px -8px, 0px 8px;
 }

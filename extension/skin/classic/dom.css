@@ -15,10 +15,6 @@
     overflow: hidden;
 }
 
-.memberValueCell.readOnly > SPAN {
-    opacity: 0.5;
-}
-
 .memberLabel {
     cursor: default;
     overflow: hidden;
@@ -30,6 +26,44 @@
     color: gray;
     margin-right: 3px;
     font-weight: normal;
+}
+
+.memberValueIcon > div {
+    width: 15px;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+/* Read Only Properties */
+
+.memberValueCell.readOnly {
+    opacity: 0.5;
+}
+
+.memberValueIcon.readOnly {
+    background: url("chrome://firebug/skin/readOnlyProp.svg") no-repeat;
+    background-position: 4px 4px;
+    background-size: 10px 10px;
+}
+
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
+/* Read Only InfoTip */
+
+.readOnlyInfoTip {
+    margin: 3px;
+}
+
+.readOnlyInfoTip > .name {
+    font-weight: bold;
+    margin-bottom: 4px;
+    font-size: 12px;
+}
+
+.readOnlyInfoTip > div {
+    padding: 0 2px 0 2px;
+}
+
+.readOnlyInfoTip > div.no {
+    text-decoration: line-through;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
@@ -44,9 +78,11 @@
 
 .memberRow {
     height: 100%;
+    border: 1px solid transparent; /* see issue 5769 */
 }
 
 .memberRowHeader {
+    position: relative;
     cursor: pointer;
     display: none;
     height: 100%;
@@ -58,17 +94,28 @@
     display: block;
 }
 
-/* Display brekpoint disc */
+/* Display breakpoint disc */
 .memberRow .memberRowHeader {
-    background-position: 5px 2px;
+    background-position: 5px 4px;
 }
 
 .memberRow[breakpoint="true"] .memberRowHeader {
-    background-image: url(chrome://firebug/skin/breakpoint.png);
+    background-image: url(chrome://firebug/skin/breakpoint.svg);
 }
 
 .memberRow[breakpoint="true"][disabledBreakpoint="true"] .memberRowHeader {
-    background-image: url(chrome://firebug/skin/breakpointDisabled.png);
+    background-image: none;
+}
+
+.memberRow[breakpoint="true"][disabledBreakpoint="true"] .memberRowHeader::before {
+    content: "";
+    position: absolute;
+    top: 4px;
+    left: 5px;
+    width: 12px;
+    height: 12px;
+    background: url(chrome://firebug/skin/breakpoint.svg) no-repeat;
+    opacity: 0.5;
 }
 
 .memberRow[breakable="true"]:hover .memberRowHeader {
@@ -77,39 +124,57 @@
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
-.memberRow.hasChildren > .memberLabelCell > .memberLabel:hover {
+.memberRow.hasChildren > .memberLabelCell > .memberLabel:hover,
+.memberRow.cropped > .memberLabelCell > .memberLabel:hover {
     cursor: pointer;
     color: blue;
     text-decoration: underline;
 }
 
-.panelNode-dom .memberRow:hover {
+.memberRow:hover {
     background-color: #EFEFEF;
 }
 
-.panelNode-dom .memberRow td {
+.panelNode-dom .memberRow td,
+.panelNode-domSide .memberRow td {
     border-bottom: 1px solid #EFEFEF;
+}
+
+/*************************************************************************************************/
+/* Spinner (used for async fetch) */
+
+.memberRow.hasChildren.spinning > .memberLabelCell > .memberLabel {
+    background-image: url(chrome://firebug/skin/spinner.png) !important;
+    background-repeat: no-repeat;
+    background-position: 3px 3px;
 }
 
 /* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
 
+.userLabel,
+.userClassLabel,
+.userFunctionLabel {
+    font-weight: bold;
+}
+
 .userLabel {
     color: #000000;
-    font-weight: bold;
 }
 
 .userClassLabel {
     color: #E90000;
-    font-weight: bold;
 }
 
 .userFunctionLabel {
     color: #025E2A;
-    font-weight: bold;
 }
 
 .domLabel {
     color: #000000;
+}
+
+.domClassLabel {
+    color: #E90000;
 }
 
 .domFunctionLabel {
@@ -119,86 +184,4 @@
 .ordinalLabel {
     color: SlateBlue;
     font-weight: bold;
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-.scopesRow {
-    padding: 2px 18px;
-    background-color: LightYellow;
-    color: #666666;
-}
-
-.scopesRow td {
-    border-top: 1px solid #BEBEBE;
-}
-
-.scopesLabel {
-    background-color:  LightYellow;
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-.watchEditCell {
-    padding: 2px 18px;
-    background-color: LightYellow;
-    border-bottom: 1px solid #BEBEBE;
-    color: #666666;
-    line-height: 14px;
-    cursor: text;
-}
-
-.editor-watchNewRow,
-.editor-memberRow {
-    font-family: monospace !important;
-}
-
-.editor-memberRow {
-    padding: 1px 0 !important;
-}
-
-.editor-watchRow {
-    padding-bottom: 0 !important;
-}
-
-.watchRow > .memberLabelCell {
-    font-family: monospace;
-    padding-top: 1px;
-    padding-bottom: 1px;
-}
-
-.watchRow > .memberLabelCell > .memberLabel {
-    background-color: transparent;
-}
-
-.watchRow > .memberValueCell {
-    padding-top: 2px;
-    padding-bottom: 2px;
-}
-
-.watchRow > .memberLabelCell,
-.watchRow > .memberValueCell {
-    background-color: #F5F5F5;
-    border-bottom: 1px solid #BEBEBE;
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-.watchToolbox {
-    z-index: 2147483647;
-    position: absolute;
-    right: 0;
-    padding: 1px 2px;
-}
-
-/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * */
-
-.domTable .objectBox-errorMessage {
-    padding: 0 0 0 18px;
-    background: url(chrome://firebug/skin/errorIcon-sm.png) no-repeat 0 0;
-    color: red;
-}
-
-.domTable .objectBox-errorMessage .errorTitle {
-    display: inline;
 }

@@ -1,6 +1,5 @@
 function runTest(request)
 {
-    FBTest.sysout("issue372.START");
     FBTest.openNewTab(basePath + "net/372/issue372.html", function(win)
     {
         // Open Firebug UI and enable Net panel.
@@ -19,12 +18,12 @@ function runTest(request)
                 if (FBTest.ok(postBody, "Post tab must exist."))
                 {
                     var row = postBody.firstChild.childNodes[1];
-                    FBTest.compare(win.xml, row.textContent, 
+                    FBTest.compare(win.xml, row.textContent,
                         "Post tab body content verified");
                 }
 
                 // Finish test
-                FBTest.testDone("issue372.DONE");
+                FBTest.testDone();
             })
         });
     })

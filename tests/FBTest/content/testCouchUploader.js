@@ -1,14 +1,20 @@
 /* See license.txt for terms of usage */
 
-FBTestApp.ns( /** @scope _testCouchUploader_ */ function() { with (FBL) {
+define([
+    "firebug/lib/trace",
+    "firebug/lib/string",
+    "firebug/lib/object",
+    "firebug/chrome/window",
+],
+function(FBTrace, Str, Obj, Win) {
 
-// ************************************************************************************************
-// Test Console Implementation
+// ********************************************************************************************* //
+// Constants
 
 var Cc = Components.classes;
 var Ci = Components.interfaces;
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 /** @namespace */
 FBTestApp.TestCouchUploader =
@@ -28,6 +34,12 @@ FBTestApp.TestCouchUploader =
 
         // Get header document...
         var header = this.getHeaderDoc();
+        var params = this.getUserMessage();
+        if (params.cancel)
+            return;
+
+        // Crop the message (1K max)
+        header["User Message"] = Str.cropString(params.message, 1024);
 
         // Since Gecko 2.0 installed extensions must be collected asynchronously
         var self = this;
@@ -45,8 +57,10 @@ FBTestApp.TestCouchUploader =
                 error: function(status, error, reason)
                 {
                     if (FBTrace.DBG_FBTEST || FBTrace.DBG_ERRORS)
-                        FBTrace.sysout("fbtest.TestCouchUploader.onUpload; ERROR Can't upload test results" +
-                            status + ", " + error + ", " + reason);
+                    {
+                        FBTrace.sysout("fbtest.TestCouchUploader.onUpload; ERROR Can't upload " +
+                            "test results" + status + ", " + error + ", " + reason);
+                    }
 
                     alert("Can't upload test results! " + error + ", " + reason);
                 }
@@ -87,8 +101,10 @@ FBTestApp.TestCouchUploader =
             error: function(status, error, reason)
             {
                 if (FBTrace.DBG_FBTEST || FBTrace.DBG_ERRORS)
-                    FBTrace.sysout("fbtest.TestCouchUploader.onUpload; ERROR Can't upload test results" +
-                        status + ", " + error + ", " + reason);
+                {
+                    FBTrace.sysout("fbtest.TestCouchUploader.onUpload; ERROR Can't upload " +
+                        "test results" + status + ", " + error + ", " + reason);
+                }
 
                 alert("Can't upload test results!");
             }
@@ -99,15 +115,20 @@ FBTestApp.TestCouchUploader =
     onResultsUploaded: function(headerid, data)
     {
         var remoteFBL = FBTestApp.FBTest.FirebugWindow.FBL;
-        //remoteFBL.openNewTab("http://legoas/firebug/tests/content/testbot/results/?userheaderid=" + headerid);
-        //remoteFBL.openNewTab("http://getfirebug.com/tests/content/testbot/results/?userheaderid=" + headerid);
-        remoteFBL.openNewTab("http://getfirebug.com/testresults/?userheaderid=" + headerid);
+
+        var uri = Firebug.getPref("extensions.fbtest", "databaseURL");
+        var name = Firebug.getPref("extensions.fbtest", "databaseName");
+
+        remoteFBL.openNewTab("https://getfirebug.com/testresults/" +
+            "?dburi=" + uri +
+            "&dbname=" + name +
+            "&userheaderid=" + headerid);
     },
 
     onStatusBarPopupShowing: function(event)
     {
         // Can't upload if there are no results.
-        $("menu_uploadTestResults").disabled = !this.isEnabled();
+        Firebug.chrome.$("menu_uploadTestResults").disabled = !this.isEnabled();
     },
 
     isEnabled: function()
@@ -115,7 +136,7 @@ FBTestApp.TestCouchUploader =
         return this.getTotalTests() > 0;
     },
 
-    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
     getHeaderDoc: function()
     {
@@ -134,13 +155,111 @@ FBTestApp.TestCouchUploader =
         header["FBTest"] = FBTestApp.TestConsole.getVersion();
         header["Firebug"] = Firebug.getVersion();
         header["Locale"] = currLocale;
-        header["OS Detailed Name"] = ""; //xxxHonza todo
-        header["OS Name"] = systemInfo.getProperty("name");
+        header["OS Detailed Name"] = this.getOSName(systemInfo.getProperty("name"),
+            systemInfo.getProperty("version"));
+        header["OS Platform"] = systemInfo.getProperty("name");
         header["OS Version"] = systemInfo.getProperty("version");
+        header["OS Architecture"] = systemInfo.getProperty("arch");
         header["Test Suite"] = FBTestApp.TestConsole.testListPath;
         header["Total Tests"] = this.getTotalTests().toString();
 
         return header;
+    },
+
+    getOSName: function(name, version)
+    {
+        switch (name)
+        {
+            case "Windows_NT":
+                // According to
+                // http://msdn.microsoft.com/en-us/library/windows/desktop/ms724832%28v=vs.85%29.aspx
+                var versions = new Map();
+                versions.set("5.0", "2000");
+                versions.set("5.1", "XP");
+                versions.set("5.2", "XP 64-bit");
+                versions.set("6.0", "Vista");
+                versions.set("6.1", "7");
+                versions.set("6.2", "8");
+                versions.set("6.3", "8.1");
+
+                if (versions.has(version))
+                    return "Windows " + versions.get(version);
+                break;
+
+            case "Darwin":
+                // According to http://en.wikipedia.org/wiki/Darwin_%28operating_system%29
+                var versions = new Map();
+                versions.set("1.3.1", "10.0");
+                versions.set("1.4.1", "10.1");
+                versions.set("5.1", "10.1.1");
+                versions.set("5.5", "10.1.5");
+                versions.set("6.0.1", "10.2");
+                versions.set("6.8", "10.2.8");
+                versions.set("7.0", "10.3");
+                versions.set("7.9", "10.3.9");
+                versions.set("8.0", "10.4");
+                versions.set("8.11", "10.4.11");
+                versions.set("9.0", "10.5");
+                versions.set("9.8", "10.5.8");
+                versions.set("10.0", "10.6");
+                versions.set("10.8", "10.4");
+                versions.set("11.0.0", "10.7");
+                versions.set("11.4.0", "10.7.4");
+                versions.set("11.4.2", "10.7.5");
+                versions.set("12.0.0", "10.8");
+                versions.set("12.3.0", "10.8.2");
+                versions.set("12.4.0", "10.8.4");
+                versions.set("12.5.0", "10.8.5");
+                versions.set("13.0.0", "10.9");
+
+                if (versions.has(version))
+                    return "Mac OS X " + versions.get(version);
+                break;
+
+            case "Linux":
+                // Check for Fedora
+                var reFedora = /fc(\d+)/;
+                var match = version.match(reFedora);
+                if (match)
+                  return "Fedora " + match[1];
+                break;
+
+                // Check for Ubuntu
+                var reGnome = /^(3\.\d+).*-generic$/;
+
+                var match = version.match(reGnome);
+                if (match)
+                {
+                    // According to http://en.wikipedia.org/wiki/List_of_Ubuntu_releases#Table_of_versions
+                    var versions = new Map();
+                    versions.set("3.0", "11.10");
+                    versions.set("3.2", "12.04 LTS");
+                    versions.set("3.5", "12.10/12.04.2 LTS");
+                    versions.set("3.8", "13.04/12.04.3 LTS");
+                    versions.set("3.11", "13.10/12.04.4 LTS");
+                    versions.set("3.13", "14.04 LTS");
+                    versions.set("3.14", "12.04.5 LTS");
+
+                    if (versions.has(version))
+                        return "Ubuntu " + versions.get(version);
+                }
+        }
+
+        return "";
+    },
+
+    getUserMessage: function()
+    {
+        var params = {
+            message: "",
+            cancel: false,
+        };
+
+        var dialog = parent.openDialog("chrome://fbtest/content/userMessage.xul",
+            "_blank", "chrome,centerscreen,resizable=yes,modal=yes",
+            params);
+
+        return params;
     },
 
     getExtensions: function(callback)
@@ -192,9 +311,10 @@ FBTestApp.TestCouchUploader =
 
     getResultDoc: function(test)
     {
-        var result = extend(this.getHeaderDoc(), {type: "user-result"});
+        var result = Obj.extend(this.getHeaderDoc(), {type: "user-result"});
 
         result.description = test.desc;
+        result.test = test.uri;
         result.file = test.testPage ? test.testPage : test.uri;
         result.result = test.error ? (test.category == "fails" ? "TEST-KNOWN-FAIL" :
             "TEST-UNEXPECTED-FAIL") : "TEST-PASS";
@@ -213,7 +333,7 @@ FBTestApp.TestCouchUploader =
         return result;
     },
 
-    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
     getTotalTests: function()
     {
@@ -228,23 +348,27 @@ FBTestApp.TestCouchUploader =
     }
 };
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 /** @namespace */
 var CouchDB =
 {
-    uri: "http://brasstacks.mozilla.com/couchdb/firebug/",
-
     saveDoc: function(doc, options)
     {
+        var uri = Firebug.getPref("extensions.fbtest", "databaseURL");
+        var name = Firebug.getPref("extensions.fbtest", "databaseName");
+
         options = options || {};
         this.ajax({
             type: "POST",
-            url: this.uri,
+            url: uri + name,
             contentType: "application/json",
             data: toJSON(doc),
             complete: function(req)
             {
+                if (FBTrace.DBG_FBTEST)
+                    FBTrace.sysout("testCouchUploader.saveDoc;", req);
+
                 var resp = parseJSON(req.responseText);
                 if (req.status == 201)
                 {
@@ -255,11 +379,16 @@ var CouchDB =
                 }
                 else if (options.error)
                 {
-                    options.error(req.status, resp.error, resp.reason);
+                    if (FBTrace.DBG_ERRORS)
+                        FBTrace.sysout("testCouchUploader.saveDoc; ERROR " + options.error, req);
+
+                    options.error(req.status, (resp ? resp.error : "unknown"),
+                        (resp ? resp.reason : "unknown"));
                 }
                 else
                 {
-                    alert("The document could not be saved: " + resp.reason);
+                    alert("The document could not be saved: " +
+                        (resp ? resp.reason : "unknown"));
                 }
             }
         });
@@ -267,14 +396,21 @@ var CouchDB =
 
     bulkSave: function(docs, options)
     {
-        extend(options, {successStatus: 201});
+        var uri = Firebug.getPref("extensions.fbtest", "databaseURL");
+        var name = Firebug.getPref("extensions.fbtest", "databaseName");
+
+        Obj.extend(options, {successStatus: 201});
+
         this.ajax({
             type: "POST",
-            url: this.uri + "_bulk_docs",
+            url: uri + name + "/_bulk_docs",
             contentType: "application/json",
             data: toJSON(docs),
             complete: function(req)
             {
+                if (FBTrace.DBG_FBTEST)
+                    FBTrace.sysout("testCouchUploader.bulkSave;", req);
+
                 var resp = parseJSON(req.responseText);
                 if (req.status == 201)
                 {
@@ -283,11 +419,16 @@ var CouchDB =
                 }
                 else if (options.error)
                 {
-                    options.error(req.status, resp.error, resp.reason);
+                    if (FBTrace.DBG_ERRORS)
+                        FBTrace.sysout("testCouchUploader.bulkSave; ERROR " + options.error, req);
+
+                    options.error(req.status, (resp ? resp.error : "unknown"),
+                        (resp ? resp.reason : "unknown"));
                 }
                 else
                 {
-                    alert("The document could not be saved: " + resp.reason);
+                    alert("The document could not be saved: " +
+                        (resp ? resp.reason : "unknown"));
                 }
             },
         });
@@ -297,7 +438,9 @@ var CouchDB =
     {
         try
         {
-            var request = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].createInstance(Ci.nsIXMLHttpRequest);
+            var request = Cc["@mozilla.org/xmlextras/xmlhttprequest;1"].
+                createInstance(Ci.nsIXMLHttpRequest);
+
             request.open(options.type, options.url, true);
             request.setRequestHeader("Content-Type", options.contentType);
             /** @ignore */
@@ -319,7 +462,7 @@ var CouchDB =
     }
 };
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 function toJSON(obj)
 {
@@ -328,8 +471,21 @@ function toJSON(obj)
 
 function parseJSON(data)
 {
-    return JSON.parse(data);
+    try
+    {
+        return JSON.parse(data);
+    }
+    catch (e)
+    {
+        FBTrace.sysout("testCouchUploader.parseJSON; EXCEPTION " + e, e);
+        FBTrace.sysout("testCouchUploader.parseJSON; Data ", data);
+    }
 }
 
-// ************************************************************************************************
-}});
+// ********************************************************************************************* //
+// Registration
+
+return FBTestApp.TestCouchUploader;
+
+// ********************************************************************************************* //
+});

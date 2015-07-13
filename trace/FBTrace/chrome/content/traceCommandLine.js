@@ -1,22 +1,31 @@
 /* See license.txt for terms of usage */
 
+define([
+    "fbtrace/trace",
+    "fbtrace/lib/dom",
+    "fbtrace/lib/object",
+    "fbtrace/lib/window",
+    "fbtrace/lib/menu",
+    "fbtrace/lib/system",
+],
+function(FBTrace, Dom, Obj, Win, Menu, System) {
+
+// ********************************************************************************************* //
+// Constants
+
+const Cc = Components.classes;
+const Ci = Components.interfaces;
+const Cu = Components.utils;
+
+var sourceEditorScope = System.importModule([
+    "resource://fbtrace/orion/source-editor.jsm",
+    "resource:///modules/source-editor.jsm",
+    "resource:///modules/devtools/sourceeditor/source-editor.jsm"]);
+
+Cu["import"]("resource://fbtrace/storageService.js");
+
 // ********************************************************************************************* //
 // Command Line Implementation
-
-try
-{
-    Components.utils["import"]("resource:///modules/source-editor.jsm");
-}
-catch (err)
-{
-    // Inroduced in Firefox 8
-}
-
-// ********************************************************************************************* //
-
-Components.utils.import("resource://fbtrace-firebug/storageService.js");
-
-// ********************************************************************************************* //
 
 var TraceCommandLine =
 {
@@ -27,19 +36,15 @@ var TraceCommandLine =
         if (this.editor)
             return;
 
-        if (typeof(SourceEditor) == "undefined")
-            return;
-
-        this.editor = new SourceEditor();
+        this.editor = new sourceEditorScope.SourceEditor();
 
         // Load previous command line content.
         var commandLineIntro = this.loadContent();
 
-        var config =
-        {
-            mode: SourceEditor.MODES.JAVASCRIPT,
+        var config = {
+            mode: sourceEditorScope.SourceEditor.MODES.JAVASCRIPT,
             showLineNumbers: true,
-            placeholderText: commandLineIntro,
+            initialText: commandLineIntro,
         };
 
         var editorPlaceholder = document.getElementById("fbTrace-editor");
@@ -76,9 +81,9 @@ var TraceCommandLine =
         var commandLine = document.getElementById("fbTraceCommandLine");
 
         // Toggle visibility of the command line.
-        var shouldShow = FBL.isCollapsed(splitter);
-        FBL.collapse(splitter, !shouldShow);
-        FBL.collapse(commandLine, !shouldShow);
+        var shouldShow = Dom.isCollapsed(splitter);
+        Dom.collapse(splitter, !shouldShow);
+        Dom.collapse(commandLine, !shouldShow);
 
         if (shouldShow && this.editor)
             this.editor.focus();
@@ -91,7 +96,7 @@ var TraceCommandLine =
         if (!this.currentWindow)
         {
             var self = this;
-            FBL.iterateBrowserWindows("navigator:browser", function(win)
+            Win.iterateBrowserWindows("navigator:browser", function(win)
             {
                 return self.currentWindow = win;
             });
@@ -102,9 +107,9 @@ var TraceCommandLine =
 
     onContextMenuShowing: function(popup)
     {
-        // Collect all browser windows with Firebug.
+        // Collect available browser windows.
         var windows = [];
-        FBL.iterateBrowserWindows("", function(win)
+        Win.iterateBrowserWindows("", function(win)
         {
             windows.push(win);
         });
@@ -118,9 +123,9 @@ var TraceCommandLine =
                 label: win.document.title,
                 type: "radio",
                 checked: this.currentWindow == win,
-                command: FBL.bindFixed(this.selectContext, this, win)
+                command: Obj.bindFixed(this.selectContext, this, win)
             };
-            FBL.createMenuItem(popup, item);
+            Menu.createMenuItem(popup, item);
         }
     },
 
@@ -202,7 +207,7 @@ var TraceCommandLine =
     getStorageFile: function()
     {
         var dirService = Cc["@mozilla.org/file/directory_service;1"].getService(Ci.nsIProperties);
-        var file = dirService.get("ProfD", Ci.nsILocalFile);
+        var file = dirService.get("ProfD", Ci.nsIFile);
         file.append("firebug");
         file.append("fbtrace");
         file.append("commandLine.txt");
@@ -222,8 +227,12 @@ var commandLineIntro =
 "\n";
 
 // ********************************************************************************************* //
+// Registration
 
 addEventListener("load", TraceCommandLine.onLoad.bind(TraceCommandLine), false);
 addEventListener("unload", TraceCommandLine.onUnload.bind(TraceCommandLine), false);
 
+return TraceCommandLine;
+
 // ********************************************************************************************* //
+});

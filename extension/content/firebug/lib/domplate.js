@@ -11,7 +11,7 @@ function(FBL, Str) {
 
 var Domplate = {};
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 function DomplateTag(tagName)
 {
@@ -28,7 +28,7 @@ function DomplateLoop()
 {
 }
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 var womb = null;
 var uid = 0;
@@ -36,7 +36,7 @@ var uid = 0;
 // xxxHonza: the only global should be Firebug object.
 var domplate = function()
 {
-    var lastSubject;
+    var lastSubject = null;
     for (var i = 0; i < arguments.length; ++i)
         lastSubject = lastSubject ? copyObject(lastSubject, arguments[i]) : arguments[i];
 
@@ -87,10 +87,13 @@ Domplate.FOR = function()
 
 DomplateTag.prototype =
 {
-    /*
-     *  Initializer for DOM templates. Called to create new Functions objects like TR, TD, OBJLINK, etc. See defineTag
-     *  @param args keyword argments for the template, the {} brace stuff after the tag name, eg TR({...}, TD(...
-     *  @param oldTag a nested tag, eg the TD tag in TR({...}, TD(...
+    /**
+     * Initializer for DOM templates. Called to create new Functions objects like TR, TD,
+     * OBJLINK, etc. See defineTag
+     *
+     * @param args keyword argments for the template, the {} brace stuff after the tag name,
+     *      eg TR({...}, TD(...
+     * @param oldTag a nested tag, eg the TD tag in TR({...}, TD(...
      */
     merge: function(args, oldTag)
     {
@@ -131,7 +134,7 @@ DomplateTag.prototype =
             var val = parseValue(args[name]);
             readPartNames(val, this.vars);
 
-            if (Str.hasPrefix(name, "on"))
+            if (name.lastIndexOf("on", 0) == 0)
             {
                 var eventName = name.substr(2);
                 if (!this.listeners)
@@ -154,7 +157,7 @@ DomplateTag.prototype =
             }
             else
             {
-                if (name == "class" && this.attrs.hasOwnProperty(name) )
+                if (name == "class" && this.attrs.hasOwnProperty(name))
                     this.attrs[name] += " " + val;
                 else
                     this.attrs[name] = val;
@@ -204,7 +207,10 @@ DomplateTag.prototype =
             if (!tag || !tag.tag)
             {
                 if (FBTrace.DBG_DOMPLATE)
-                    FBTrace.sysout("domplate.Empty tag object passed to __link__ (compileMarkup). Ignoring element.");
+                {
+                    FBTrace.sysout("domplate.Empty tag object passed to __link__ " +
+                        "(compileMarkup). Ignoring element.");
+                }
                 return;
             }
 
@@ -224,20 +230,30 @@ DomplateTag.prototype =
             return Str.escapeForElementAttribute(value);
         }
 
-        function isArray(it)
+        function __attr__(name, valueParts)
         {
-            return Object.prototype.toString.call(it) === "[object Array]";
+            // Will be called with valueParts = [,arg,arg,...], but we don't
+            // care that the first element is undefined.
+            if (valueParts.length === 2 && valueParts[1] === undefined)
+                return "";
+            var value = valueParts.join("");
+            return ' ' + name + '="' + __escape__(value) + '"';
         }
+
+        var isArray = Array.isArray;
 
         function __loop__(iter, outputs, fn)
         {
             var iterOuts = [];
             outputs.push(iterOuts);
 
+            if (!iter)
+                return;
+
             if (isArray(iter) || iter instanceof NodeList)
                 iter = new ArrayIterator(iter);
 
-            var value;
+            var value = null;
             try
             {
                 while (1)
@@ -263,7 +279,10 @@ DomplateTag.prototype =
         }
 
         if (FBTrace.DBG_DOMPLATE)
-            fnBlock.push("//@ sourceURL=chrome://firebug/compileMarkup_"+(this.tagName?this.tagName:'')+"_"+(uid++)+".js\n");
+        {
+            fnBlock.push("//@ sourceURL=chrome://firebug/compileMarkup_" +
+                (this.tagName?this.tagName:'')+"_"+(uid++)+".js\n");
+        }
 
         var js = fnBlock.join("");
         this.renderMarkup = eval(js);
@@ -283,9 +302,9 @@ DomplateTag.prototype =
             {
                 for (var i = 0; i < child.parts.length; ++i)
                 {
-                    if (child.parts[i] instanceof Variable)
+                    if (child.parts[i] instanceof Variables)
                     {
-                        var name = child.parts[i].name;
+                        var name = child.parts[i].names[0];
                         var names = name.split(".");
                         args.push(names[0]);
                     }
@@ -306,12 +325,11 @@ DomplateTag.prototype =
             if (name != "class")
             {
                 var val = this.attrs[name];
-                topBlock.push(', " ', name, '=\\""');
-                addParts(val, ',', topBlock, info, true);
-                topBlock.push(', "\\""');
+                topBlock.push(',__attr__("', name, '",[');
+                addParts(val, ',', topBlock, info, false);
+                topBlock.push('])');
             }
         }
-
         if (this.listeners)
         {
             for (var i = 0; i < this.listeners.length; i += 2)
@@ -324,12 +342,12 @@ DomplateTag.prototype =
                 readPartNames(this.props[name], topOuts);
         }
 
-        if ( this.attrs.hasOwnProperty("class") || this.classes)
+        if (this.attrs.hasOwnProperty("class") || this.classes)
         {
             topBlock.push(', " class=\\""');
             if (this.attrs.hasOwnProperty("class"))
                 addParts(this.attrs["class"], ',', topBlock, info, true);
-              topBlock.push(', " "');
+            topBlock.push(', " "');
             for (var name in this.classes)
             {
                 topBlock.push(', (');
@@ -341,10 +359,15 @@ DomplateTag.prototype =
         topBlock.push(',">"');
 
         this.generateChildMarkup(topBlock, topOuts, blocks, info);
-        topBlock.push(',"</', this.tagName, '>"');
+
+        // <br> element doesn't use end tag.
+        if (this.tagName != "br")
+            topBlock.push(',"</', this.tagName, '>"');
 
         if (FBTrace.DBG_DOMPLATE)
-            FBTrace.sysout("DomplateTag.generateMarkup "+this.tagName+": "+topBlock.slice( - topBlock.length + beginBlock).join("").replace("\n"," "), {listeners: this.listeners, props: this.props, attrs: this.attrs});
+            FBTrace.sysout("DomplateTag.generateMarkup " + this.tagName + ": " +
+                topBlock.slice( - topBlock.length + beginBlock).join("").replace("\n"," "),
+                {listeners: this.listeners, props: this.props, attrs: this.attrs});
 
     },
 
@@ -405,10 +428,8 @@ DomplateTag.prototype =
         var nodeCount = this.generateDOM(path, blocks, this.domArgs);
 
         var fnBlock = ['(function (root, context, o'];
-
         for (var i = 0; i < path.staticIndex; ++i)
             fnBlock.push(', ', 's'+i);
-
         for (var i = 0; i < path.renderIndex; ++i)
             fnBlock.push(', ', 'd'+i);
 
@@ -425,9 +446,9 @@ DomplateTag.prototype =
 
         fnBlock.push(blocks.join(""));
 
-        if (this.subject)
-            fnBlock.push('}\n');
         if (this.context)
+            fnBlock.push('}\n');
+        if (this.subject)
             fnBlock.push('}\n');
 
         fnBlock.push('return ', nodeCount, ';\n');
@@ -435,7 +456,7 @@ DomplateTag.prototype =
 
         function __bind__(object, fn)
         {
-            return function(event) { return fn.apply(object, [event]); }
+            return function(event) { return fn.apply(object, [event]); };
         }
 
         function __link__(node, tag, args)
@@ -443,7 +464,10 @@ DomplateTag.prototype =
             if (!tag || !tag.tag)
             {
                 if (FBTrace.DBG_DOMPLATE)
-                    FBTrace.sysout("domplate.Empty tag object passed to __link__ (compileDOM). Ignoring element.");
+                {
+                    FBTrace.sysout("domplate.Empty tag object passed to __link__ " +
+                        "(compileDOM). Ignoring element.");
+                }
                 return;
             }
 
@@ -456,9 +480,11 @@ DomplateTag.prototype =
             return tag.tag.renderDOM.apply(tag.tag.subject, domArgs);
         }
 
-        var self = this;
         function __loop__(iter, fn)
         {
+            if (!iter)
+                return 0;
+
             var nodeCount = 0;
             for (var i = 0; i < iter.length; ++i)
             {
@@ -479,6 +505,7 @@ DomplateTag.prototype =
             for (var i = 2; i < arguments.length; ++i)
             {
                 var index = arguments[i];
+
                 if (i == 3)
                     index += offset;
 
@@ -514,7 +541,6 @@ DomplateTag.prototype =
             chained.cause = {exc:exc, js: js};
             throw chained;
         }
-
     },
 
     generateDOM: function(path, blocks, args)
@@ -528,7 +554,9 @@ DomplateTag.prototype =
             {
                 var val = this.listeners[i+1];
                 var arg = generateArg(val, path, args);
-                blocks.push('node.addEventListener("', this.listeners[i], '", __bind__(this, ', arg, '), false);\n');
+
+                blocks.push('node.addEventListener("', this.listeners[i],
+                    '", __bind__(this, ', arg, '), false);\n');
             }
         }
 
@@ -538,7 +566,7 @@ DomplateTag.prototype =
             {
                 var val = this.props[name];
                 var arg = generateArg(val, path, args);
-                blocks.push('node.', name, ' = ', arg, ';\n');
+                blocks.push("node.", name, " = ", arg, ";\n");
             }
         }
 
@@ -550,15 +578,18 @@ DomplateTag.prototype =
     {
         blocks.push("var node = __path__(root, o");
 
+        // this will be a sum of integers as a string which will be summed in the eval,
+        // then passed to __path__
         for (var i = 0; i < path.length; ++i)
-            blocks.push(",", path[i]);  // this will be a sum of integers as a string which will be summed in the eval, then passed to __path__
+            blocks.push(",", path[i]);
 
         blocks.push(");\n");
 
         if (FBTrace.DBG_DOMPLATE)
         {
             var nBlocks = 2*path.length + 2;
-            var genTrace = "FBTrace.sysout(\'"+blocks.slice(-nBlocks).join("").replace("\n","")+"\'+'->'+(node?FBL.getElementHTML(node):'null'), node);\n";
+            var genTrace = "FBTrace.sysout(\'"+blocks.slice(-nBlocks).join("").replace("\n","")+
+                "\'+'->'+(node?FBL.getElementHTML(node):'null'), node);\n";
             blocks.push(genTrace);
         }
     },
@@ -577,8 +608,10 @@ DomplateTag.prototype =
         path.pop();
     },
 
-    /*
-     * We are just hiding from javascript.options.strict. For some reasons it's ok if we return undefined here.
+    /**
+     * We are just hiding from javascript.options.strict. For some reasons it's ok if
+     * we return undefined here.
+     *
      * @return null or undefined or possibly a context.
      */
     getContext: function()
@@ -587,7 +620,7 @@ DomplateTag.prototype =
     }
 };
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 DomplateEmbed.prototype = copyObject(DomplateTag.prototype,
 {
@@ -643,7 +676,10 @@ DomplateEmbed.prototype = copyObject(DomplateTag.prototype,
         blocks.push('});\n');
 
         if (FBTrace.DBG_DOMPLATE)
-            FBTrace.sysout("DomplateEmbed.generateMarkup "+blocks.slice( - blocks.length + beginBlock).join("").replace("\n"," "), {value: this.value, attrs: this.attrs});
+        {
+            FBTrace.sysout("DomplateEmbed.generateMarkup "+blocks.slice( - blocks.length +
+                beginBlock).join("").replace("\n"," "), {value: this.value, attrs: this.attrs});
+        }
 
         //this.generateChildMarkup(topBlock, topOuts, blocks, info);
     },
@@ -663,14 +699,18 @@ DomplateEmbed.prototype = copyObject(DomplateTag.prototype,
 
         if (FBTrace.DBG_DOMPLATE)
         {
-            FBTrace.sysout("DomplateEmbed.generateDOM "+blocks.slice( - blocks.length + beginBlock).join("").replace("\n"," "), {path: path});
-            blocks.push("FBTrace.sysout('__link__ called with node:'+FBL.getElementHTML(node), node);\n");
+            FBTrace.sysout("DomplateEmbed.generateDOM "+blocks.slice( - blocks.length +
+                beginBlock).join("").replace("\n"," "), {path: path});
+
+            blocks.push("FBTrace.sysout('__link__ called with node:'+" +
+                "FBL.getElementHTML(node), node);\n");
         }
+
         return embedName;
     }
 });
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 DomplateLoop.prototype = copyObject(DomplateTag.prototype,
 {
@@ -701,12 +741,25 @@ DomplateLoop.prototype = copyObject(DomplateTag.prototype,
     {
         this.addCode(topBlock, topOuts, blocks);
 
+        // We are in a FOR loop and our this.iter property contains
+        // either a simple function name as a string or a Parts object
+        // with only ONE Variables object. There is only one variables object
+        // as the FOR argument can contain only ONE valid function callback
+        // with optional arguments or just one variable. Allowed arguments are
+        // func or $var or $var.sub or $var|func or $var1,$var2|func or $var|func1|func2 or $var1,$var2|func1|func2
         var iterName;
         if (this.iter instanceof Parts)
         {
+            // We have a function with optional aruments or just one variable
             var part = this.iter.parts[0];
-            iterName = part.name;
 
+            // Join our function arguments or variables
+            // If the user has supplied multiple variables without a function
+            // this will create an invalid result and we should probably add an
+            // error message here or just take the first variable
+            iterName = part.names.join(",");
+
+            // Nest our functions
             if (part.format)
             {
                 for (var i = 0; i < part.format.length; ++i)
@@ -714,11 +767,16 @@ DomplateLoop.prototype = copyObject(DomplateTag.prototype,
             }
         }
         else
+        {
+            // We have just a simple function name without any arguments
             iterName = this.iter;
+        }
 
-        blocks.push('__loop__.apply(this, [', iterName, ', __out__, function(', this.varName, ', __out__) {\n');
+        blocks.push('__loop__.apply(this, [', iterName, ', __out__, function(',
+            this.varName, ', __out__) {\n');
         this.generateChildMarkup(topBlock, topOuts, blocks, info);
         this.addCode(topBlock, topOuts, blocks);
+
         blocks.push('}]);\n');
     },
 
@@ -751,9 +809,12 @@ DomplateLoop.prototype = copyObject(DomplateTag.prototype,
 
         path[path.length-1] = basePath+'+'+loopName;
 
-        blocks.push(loopName,' = __loop__.apply(this, [', iterName, ', function(', counterName,',',loopName);
+        blocks.push(loopName,' = __loop__.apply(this, [', iterName, ', function(',
+            counterName,',',loopName);
+
         for (var i = 0; i < path.renderIndex; ++i)
             blocks.push(',d'+i);
+
         blocks.push(') {\n');
         blocks.push(subBlocks.join(""));
         blocks.push('return ', nodeCount, ';\n');
@@ -765,11 +826,11 @@ DomplateLoop.prototype = copyObject(DomplateTag.prototype,
     }
 });
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
-function Variable(name, format)
+function Variables(names, format)
 {
-    this.name = name;
+    this.names = names;
     this.format = format;
 }
 
@@ -778,11 +839,12 @@ function Parts(parts)
     this.parts = parts;
 }
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 function parseParts(str)
 {
-    var re = /\$([_A-Za-z][_A-Za-z0-9.|]*)/g;
+    // Match $var or $var.sub or $var|func or $var1,$var2|func or $var|func1|func2 or $var1,$var2|func1|func2
+    var re = /\$([_A-Za-z][_A-Za-z0-9.]*(,\$[_A-Za-z][_A-Za-z0-9.]*)*([_A-Za-z0-9.|]*))/g;
     var index = 0;
     var parts = [];
 
@@ -793,14 +855,23 @@ function parseParts(str)
         if (pre)
             parts.push(pre);
 
-        var expr = m[1].split("|");
-        parts.push(new Variable(expr[0], expr.slice(1)));
+        var segs = m[1].split("|");
+        var vars = segs[0].split(",$");
+
+        // Assemble the variables object and append to buffer
+        parts.push(new Variables(vars, segs.slice(1)));
+
         index = re.lastIndex;
     }
 
+    // No matches found at all so we return the whole string
     if (!index)
-        return str;
+    {
+        // Double quotes in strings need to be escaped (see issue 6710)
+        return str.replace("\\", "\\\\", "g").replace('"', '\\"', "g");
+    }
 
+    // If we have data after our last matched index we append it here as the final step
     var post = str.substr(index);
     if (post)
         parts.push(post);
@@ -830,8 +901,8 @@ function readPartNames(val, vars)
         for (var i = 0; i < val.parts.length; ++i)
         {
             var part = val.parts[i];
-            if (part instanceof Variable)
-                vars.push(part.name);
+            if (part instanceof Variables)
+                vars.push(part.names[0]);
         }
     }
 }
@@ -844,7 +915,7 @@ function generateArg(val, path, args)
         for (var i = 0; i < val.parts.length; ++i)
         {
             var part = val.parts[i];
-            if (part instanceof Variable)
+            if (part instanceof Variables)
             {
                 var varName = 'd'+path.renderIndex++;
                 if (part.format)
@@ -876,9 +947,9 @@ function addParts(val, delim, block, info, escapeIt)
         for (var i = 0; i < val.parts.length; ++i)
         {
             var part = val.parts[i];
-            if (part instanceof Variable)
+            if (part instanceof Variables)
             {
-                var partName = part.name;
+                var partName = part.names.join(",");
                 if (part.format)
                 {
                     for (var j = 0; j < part.format.length; ++j)
@@ -916,11 +987,11 @@ function creator(tag, cons)
 {
     var fn = function()
     {
-        var tag = arguments.callee.tag;
-        var cons = arguments.callee.cons;
+        var tag = fn.tag;
+        var cons = fn.cons;
         var newTag = new cons();
         return newTag.merge(arguments, tag);
-    }
+    };
 
     fn.tag = tag;
     fn.cons = cons;
@@ -929,7 +1000,7 @@ function creator(tag, cons)
     return fn;
 }
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 function copyArray(oldArray)
 {
@@ -954,7 +1025,7 @@ function extend(l, r)
         l[n] = r[n];
 }
 
-// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+// * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 function ArrayIterator(array)
 {
@@ -976,9 +1047,15 @@ FBL.$break = function()
     throw StopIteration;
 };
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
+/**
+ * @object Domplate Renderer object implements API for template rendering.
+ * Every Domplate template inherits this APIs (through extend API) and should use
+ * them every time it's rendered into DOM.
+ */
 var Renderer =
+/** @lends Renderer */
 {
     renderHTML: function(args, outputs, self)
     {
@@ -993,12 +1070,21 @@ var Renderer =
         catch (e)
         {
             if (FBTrace.DBG_DOMPLATE || FBTrace.DBG_ERRORS)
-                FBTrace.sysout("domplate.renderHTML; EXCEPTION " + e,
-                    {exc: e, render: this.tag.renderMarkup.toSource()});
+                FBTrace.sysout("domplate.renderHTML; EXCEPTION " + e, e);
+                    //{exc: e, render: this.tag.renderMarkup.toSource()});
         }
     },
 
-    insertRows: function(args, before, self)
+    /**
+     * This method is used when rendering (inserting) table rows into an existing
+     * table (i.e. tbody) element.
+     *
+     * @param {Object} args Template input object (can be null).
+     * @param {Node} after The row after which the new row will be inserted.
+     *      If <tbody> element is passed the new row will be inserted at the end.
+     * @param {Template} self Reference to the template object (can be null).
+     */
+    insertRows: function(args, after, self)
     {
         if (!args)
             args = {};
@@ -1008,20 +1094,22 @@ var Renderer =
         var outputs = [];
         var html = this.renderHTML(args, outputs, self);
 
-        var doc = before.ownerDocument;
+        var doc = after.ownerDocument;
         var table = doc.createElement("table");
         table.innerHTML = html;
 
         var tbody = table.firstChild;
-        var parent = before.localName.toLowerCase() == "tr" ? before.parentNode : before;
-        var after = before.localName.toLowerCase() == "tr" ? before.nextSibling : null;
+        var localName = after.localName.toLowerCase();
+        var parent = (localName == "tr") ? after.parentNode : after;
+        var referenceElement = (localName == "tr") ? after.nextSibling : null;
 
-        var firstRow = tbody.firstChild, lastRow;
+        var firstRow = tbody.firstChild;
+        var lastRow = null;
         while (tbody.firstChild)
         {
             lastRow = tbody.firstChild;
-            if (after)
-                parent.insertBefore(lastRow, after);
+            if (referenceElement)
+                parent.insertBefore(lastRow, referenceElement);
             else
                 parent.appendChild(lastRow);
         }
@@ -1039,7 +1127,6 @@ var Renderer =
         //
         // This fails when applied to a non-loop element as non-loop elements
         // do not generate to proper path to bounce up and down the tree.
-        //
         var offset = 0;
         if (this.tag.isLoop)
         {
@@ -1090,10 +1177,13 @@ var Renderer =
             FBTrace.sysout("domplate.insertNode html: "+html+"\n");
 
         var range = doc.createRange();
-        // if doc starts with a Text node, domplate fails because the fragment starts with a text node.
-        // That must be a gecko bug, but let's just workaround it since we want to switch to innerHTML anyway
+
+        // if doc starts with a Text node, domplate fails because the fragment starts
+        // with a text node. That must be a gecko bug, but let's just workaround it since
+        // we want to switch to innerHTML anyway
         var aDiv = doc.getElementsByTagName("div").item(0);
         range.setStartBefore(aDiv);
+
         // TODO replace with standard innerHTML
         var frag = range.createContextualFragment(html);
 
@@ -1122,14 +1212,14 @@ var Renderer =
         var html = this.renderHTML(args, outputs, self);
 
         var root;
-        if (parent.nodeType == 1)
+        if (parent.nodeType == Node.ELEMENT_NODE)
         {
             parent.innerHTML = html;
             root = parent.firstChild;
         }
         else
         {
-            if (!parent || parent.nodeType != 9)
+            if (!parent || parent.nodeType != Node.DOCUMENT_NODE)
                 parent = document;
 
             if (!womb || womb.ownerDocument != parent)
@@ -1143,6 +1233,7 @@ var Renderer =
         var domArgs = [root, this.tag.context, 0];
         domArgs.push.apply(domArgs, this.tag.domArgs);
         domArgs.push.apply(domArgs, outputs);
+
         try
         {
             this.tag.renderDOM.apply(self ? self : this.tag.subject, domArgs);
@@ -1150,9 +1241,15 @@ var Renderer =
         catch(exc)
         {
             if (FBTrace.DBG_ERRORS)
-                FBTrace.sysout("domplate renderDom FAILS "+exc, {exc: exc, renderDOM: this.tag.renderDOM.toSource(), domplate: this, domArgs: domArgs, self: self});
+            {
+                FBTrace.sysout("domplate renderDom FAILS " + exc, {exc: exc, renderDOM:
+                    this.tag.renderDOM.toSource(), domplate: this, domArgs: domArgs, self: self});
+            }
+
             var chained =  new Error("Domplate.renderDom FAILS: "+exc);
-            chained.cause = {exc: exc, renderDOM: this.tag.renderDOM.toSource(), domplate: this, domArgs: domArgs, self: self};
+            chained.cause = {exc: exc, renderDOM: this.tag.renderDOM.toSource(),
+                domplate: this, domArgs: domArgs, self: self};
+
             throw chained;
         }
 
@@ -1192,7 +1289,7 @@ var Renderer =
     }
 };
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 function defineTags()
 {
@@ -1212,9 +1309,24 @@ function defineTags()
         return function() {
             var newTag = new Domplate.DomplateTag(tagName);
             return newTag.merge(arguments);
-        }
+        };
     }
 }
+
+// APIs for associating elements with data, future compatible with Firebug.next.
+// The data is currently stored as expandos on the elements, or in the case of
+// elements from unprivileged content, expandos on the elements' unwaived xray
+// wrappers. Note that the latter expandos are local to the current
+// compartment, and thus to Firebug when compartment_per_addon is set.
+Domplate.getElementData = function(elem, name)
+{
+    return elem[name];
+};
+
+Domplate.setElementData = function(elem, name, value)
+{
+    elem[name] = value;
+};
 
 // xxxHonza: Domplate is injected into FBL namespace only for backward
 // compatibility with extensions.
@@ -1222,6 +1334,8 @@ function defineTags()
 FBL.TAG = Domplate.TAG;
 FBL.FOR = Domplate.FOR;
 FBL.DomplateTag = Domplate.DomplateTag;
+FBL.getElementData = Domplate.getElementData;
+FBL.setElementData = Domplate.setElementData;
 
 defineTags(
     "a", "button", "br", "canvas", "col", "colgroup", "div", "fieldset", "form", "h1", "h2",
@@ -1230,15 +1344,15 @@ defineTags(
     "thead", "tr", "tt", "ul", "iframe", "code", "style",
 
     // HTML5
-    "article", "aside", "audio", "bb", "canvas", "command", "datagrid", "datalist", "details",
+    "article", "aside", "audio", "bb", "command", "datagrid", "datalist", "details",
     "dialog", "embed", "eventsource", "figure", "footer", "keygen", "mark", "meter", "nav",
     "output", "progress", "ruby", "rp", "rt", "section", "source", "time", "video"
 );
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Registration
 
 return Domplate;
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 });

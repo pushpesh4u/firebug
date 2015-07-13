@@ -1,18 +1,18 @@
 function runTest()
 {
-    FBTest.sysout("issue5006.START");
     FBTest.openNewTab(basePath + "console/completion/5006/issue5006.html", function(win)
     {
-        FBTest.openFirebug();
+        FBTest.openFirebug(function()
+        {
+            var tasks = new FBTest.TaskList();
+            tasks.push(enablePreview);
+            tasks.push(testCompletions, win);
+            tasks.push(openEditor);
+            tasks.push(testCompletions, win);
 
-        var tasks = new FBTest.TaskList();
-        tasks.push(enablePreview);
-        tasks.push(testCompletions, win);
-        tasks.push(openEditor);
-        tasks.push(testCompletions, win);
-
-        tasks.run(function() {
-            FBTest.testDone("issue5006.DONE");
+            tasks.run(function() {
+                FBTest.testDone();
+            });
         });
     });
 }
@@ -22,15 +22,18 @@ function runTest()
 
 function enablePreview(callback)
 {
-    FBTest.selectPanel("html");
-    FBTest.enableConsolePanel(function(win)
+    FBTest.enableConsolePanel(function()
     {
-        verifyConsolePopup(false);
+        FBTest.selectPanel("html");
+        FBTest.reload(function()
+        {
+            verifyConsolePopup(false);
 
-        FBTest.clickConsolePreviewButton();
-        verifyConsolePopup(true);
+            FBTest.clickConsolePreviewButton();
+            verifyConsolePopup(true);
 
-        callback();
+            callback();
+        });
     });
 }
 
@@ -39,7 +42,7 @@ function openEditor(callback)
     FBTest.selectPanel("console");
     verifyConsolePopup(false);
 
-    // Click the Command Line toggle button to switch to the Command Editor 
+    // Click the Command Line toggle button to switch to the Command Editor
     FBTest.clickToolbarButton(null, "fbToggleCommandLine");
 
     FBTest.selectPanel("html");

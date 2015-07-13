@@ -1,33 +1,33 @@
 function runTest()
 {
-    FBTest.sysout("issue3671.START");
     FBTest.openNewTab(basePath + "css/3671/issue3671.html", function(win)
     {
-        FBTest.openFirebug();
-        FBTest.selectPanel("html");
-
-        FBTest.selectElementInHtmlPanel("testElement", function(node)
+        FBTest.openFirebug(function()
         {
-            var panel = FBTest.selectSidePanel("css");
-            var names = panel.panelNode.querySelectorAll(".cssPropName");
-            FBTest.compare(1, names.length, "There must be just one CSS property.");
+            FBTest.selectPanel("html");
+            FBTest.selectElementInHtmlPanel("testElement", function(node)
+            {
+                var panel = FBTest.selectSidePanel("css");
+                var names = panel.panelNode.querySelectorAll(".cssPropName");
+                FBTest.compare(1, names.length, "There must be just one CSS property.");
 
-            // Click the CSS name to open the inline editor.
-            FBTest.synthesizeMouse(names[0]);
+                // Click the CSS name to open the inline editor.
+                FBTest.synthesizeMouse(names[0]);
 
-            // Type 'del' to remove the current selection.
-            var editor = panel.panelNode.querySelector(".textEditorInner");
-            FBTest.sendKey("DELETE", editor);
-            FBTest.compare("", editor.value, "The editor must be empty now.");
+                var editor = panel.panelNode.querySelector(".textEditorInner");
 
-            // Type 'arrow-up' and verify completion (must be completed to the last css
-            // property name that is in Firebug's internal list).
-            FBTest.sendKey("UP", editor);
-            FBTest.sendKey("UP", editor);
-            FBTest.compare("text-transform", editor.value,
-                "Must be autocompleted to text-transform.");
+                // Type 'arrow-up' and verify completion.
+                FBTest.sendKey("UP", editor);
+                FBTest.compare("margin-left", editor.value,
+                    "Must autocomplete to 'margin-left'");
 
-            FBTest.testDone("issue3671.DONE");
+                // Type 'arrow-down' and verify completion.
+                FBTest.sendKey("DOWN", editor);
+                FBTest.compare("margin-right", editor.value,
+                    "Must autocomplete to 'margin-right'");
+
+                FBTest.testDone();
+            });
         });
     });
 }

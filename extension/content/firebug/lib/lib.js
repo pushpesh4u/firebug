@@ -9,8 +9,8 @@ define([
     "firebug/lib/deprecated",
     "firebug/lib/wrapper",
     "firebug/lib/url",
-    "firebug/js/sourceLink",
-    "firebug/js/stackFrame",
+    "firebug/debugger/script/sourceLink",
+    "firebug/debugger/stack/stackFrame",
     "firebug/lib/css",
     "firebug/lib/dom",
     "firebug/lib/http",
@@ -119,13 +119,8 @@ for (var p in Keywords)
 for (var p in Firefox)
     FBL[p] = Firefox[p];
 
-FBL.deprecated = Deprecated.deprecated;
-FBL.SourceLink = SourceLink.SourceLink;
-
-//FBL.ErrorCopy = FirebugReps.ErrorCopy;
-//FBL.ErrorMessageObj = FirebugReps.ErrorMessageObj;
-//FBL.EventCopy = Dom.EventCopy;
-//FBL.PropertyObj = FirebugReps.PropertyObj;
+FBL.deprecated = Deprecated.method;
+FBL.SourceLink = SourceLink;
 
 // deprecated
 FBL.$ = function(id, doc)
@@ -136,20 +131,12 @@ FBL.$ = function(id, doc)
         return document.getElementById(id);
 };
 
-// deprecated
-FBL.jsd = Components.classes["@mozilla.org/js/jsd/debugger-service;1"].
-    getService(Components.interfaces.jsdIDebuggerService);
-
 // ********************************************************************************************* //
 // Constants
 
 try
 {
     Components.utils["import"]("resource://gre/modules/PluralForm.jsm");
-    Components.utils["import"]("resource://firebug/firebug-service.js");
-
-    // deprecated
-    FBL.fbs = fbs; // left over from component.
 }
 catch (err)
 {

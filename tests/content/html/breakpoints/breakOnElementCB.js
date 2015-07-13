@@ -4,42 +4,51 @@ const BP_BREAKONREMOVE = 3;
 
 function runTest()
 {
-    FBTest.sysout("html.breakpoints.CB; START");
     FBTest.setPref("filterSystemURLs", false);
 
     var doNotFilter = FBTest.getPref("filterSystemURLs");
 
     FBTest.compare(false, doNotFilter, "Pref filterSystemURLs must not be set true");
-    FBTest.compare(false, FW.Firebug.filterSystemURLs, "Pref Firebug.filterSystemURLs must not be set true");
+    FBTest.compare(false, FW.Firebug.Options.get("filterSystemURLs"),
+        "Pref Firebug.filterSystemURLs must not be set true");
 
 
     FBTest.openNewTab(basePath + "html/breakpoints/breakOnElement.html", function(win)
     {
         var filter = FBTest.getPref("filterSystemURLs");
         FBTest.compare(false, filter, "Pref filterSystemURLs must not be set true");
-        FBTest.compare(false, FW.Firebug.filterSystemURLs, "Pref Firebug.filterSystemURLs must not be set true");
+        FBTest.compare(false, FW.Firebug.Options.get("filterSystemURLs"),
+            "Pref Firebug.filterSystemURLs must not be set true");
 
-        FBTest.openFirebug();
-        FBTest.enableAllPanels();
+        FBTest.openFirebug(function()
+        {
+            FBTest.enableScriptPanel(function()
+            {
+                // A suite of asynchronous tests.
+                var testSuite = [];
+                testSuite.push(function(callback)
+                {
+                    breakOnMutation(win, BP_BREAKONATTRCHANGE, "breakOnAttrModified", 45, callback);
+                });
+                testSuite.push(function(callback)
+                {
+                    breakOnMutation(win, BP_BREAKONCHILDCHANGE, "breakOnChildInserted", 50, callback);
+                });
+                testSuite.push(function(callback)
+                {
+                    breakOnMutation(win, BP_BREAKONCHILDCHANGE, "breakOnChildRemoved", 55, callback);
+                });
+                testSuite.push(function(callback)
+                {
+                    breakOnMutation(win, BP_BREAKONREMOVE, "breakOnNodeRemoved", 60, callback);
+                });
 
-        // A suite of asynchronous tests.
-        var testSuite = [];
-        testSuite.push(function(callback) {
-            breakOnMutation(win, BP_BREAKONATTRCHANGE, "breakOnAttrModified", 42, callback);
-        });
-        testSuite.push(function(callback) {
-            breakOnMutation(win, BP_BREAKONCHILDCHANGE, "breakOnNodeInserted", 47, callback);
-        });
-        testSuite.push(function(callback) {
-            breakOnMutation(win, BP_BREAKONREMOVE, "breakOnNodeRemoved", 53, callback);
-        });
-
-        // Reload window to activate debugger and run all tests.
-        FBTest.reload(function(win) {
-            FBTest.runTestSuite(testSuite, function() {
-                FBTest.testDone("html.breakpoints.CB; DONE");
+                FBTest.runTestSuite(testSuite, function()
+                {
+                    FBTest.testDone();
+                });
             });
-        })
+        });
     });
 }
 
@@ -60,6 +69,11 @@ function breakOnMutation(win, type, buttonId, lineNo, callback)
         FBTest.sysout("html.breakpoints.CB; " + buttonId);
         FBTest.clickContinueButton(chrome);
         FBTest.progress("The continue button is pushed");
+
+        // Remove breakpoint.
+        FW.Firebug.HTMLModule.MutationBreakpoints.onModifyBreakpoint(context,
+            content, type);
+
         callback();
     });
 

@@ -1,35 +1,30 @@
-var versionChecker = Cc["@mozilla.org/xpcom/version-comparator;1"].getService(Ci.nsIVersionComparator);
-var appInfo = Cc["@mozilla.org/xre/app-info;1"].getService(Ci.nsIXULAppInfo);
-var FF4OrHigher = versionChecker.compare(appInfo.version, "4.0b8") >= 0;
-
-var expectedValue = /[style=\"color:\s*green\", name=\"testName\", id=\"testId\"]/;
-var expectedValue2 = /style=\"color:\s*green\"/;
+var expectedValue = /\[style="color:\s*green", name="testName", id="testId"\]/;
+var expectedValue2 = /style="color:\s*green"/;
 
 function runTest()
 {
-    FBTest.sysout("attributes.START");
     FBTest.openNewTab(basePath + "dom/attributes/attributes.html", function(win)
     {
-        FBTest.openFirebug();
-
-        FBTest.enableConsolePanel(function(win)
+        FBTest.openFirebug(function()
         {
-            FBTest.progress("console enabled, creating task list");
-            var tasks = new FBTest.TaskList();
-            tasks.push(testDomPanel);
+            FBTest.enableConsolePanel(function(win)
+            {
+                FBTest.progress("console enabled, creating task list");
+                var tasks = new FBTest.TaskList();
+                tasks.push(testDomPanel);
 
-            tasks.push(executeCommandAndVerify,
-                "$('testId').attributes", expectedValue,
-                "a", "objectLink objectLink-NamedNodeMap");
+                tasks.push(executeCommandAndVerify,
+                    "$('#testId').attributes", expectedValue,
+                    "a", "objectLink objectLink-NamedNodeMap");
 
-            tasks.push(executeCommandAndVerify,
-                "$('testId').attributes[0]",
-                expectedValue2,
-                "a", "objectLink objectLink-Attr");
+                tasks.push(executeCommandAndVerify,
+                    "$('#testId').attributes[0]", expectedValue2,
+                    "a", "objectLink objectLink-Attr");
 
-            tasks.run(function() {
-                FBTest.testDone("attributes.DONE");
-            })
+                tasks.run(function() {
+                    FBTest.testDone();
+                })
+            });
         });
     });
 }

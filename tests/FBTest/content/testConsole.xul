@@ -18,26 +18,19 @@
     <script type="application/x-javascript" src="chrome://global/content/globalOverlay.js"/>
     <script type="application/x-javascript" src="chrome://global/content/findBar.js"/>
 
+    <!-- Initialize Firebug for moduleConfig.js -->
+    <script type="application/x-javascript">
+        this.Firebug = {};
+    </script>
+
     <!-- Firebug -->
     <script type="application/x-javascript" src="chrome://firebug/content/trace.js"/>
     <script type="application/x-javascript" src="chrome://firebug/content/legacy.js"/>
     <script type="application/x-javascript" src="chrome://firebug/content/moduleConfig.js"/>
-
-    <script type="application/x-javascript" src="resource://firebug/require.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/main.js"/>
+    <script type="application/x-javascript" src="resource://firebug/mini-require.js"/>
 
     <!-- FBTest -->
-    <script type="application/x-javascript" src="chrome://fbtest/content/jsdiff.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testCore.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testResultRep.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testListRep.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testRunner.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testConsole.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testLogger.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testCouchUploader.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/notify.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/testListLoader.js"/>
-    <script type="application/x-javascript" src="chrome://fbtest/content/propTree.js"/>
+    <script type="application/x-javascript" src="chrome://fbtest/content/main.js"/>
 
     <stringbundleset id="stringbundleset">
         <stringbundle id="strings_firebug" src="chrome://firebug/locale/firebug.properties"/>
@@ -70,7 +63,7 @@
         <!-- Bar with testList.html URL (e.g. chrome://firebug/content/testList.html -->
         <toolbar id="testListUrlBar" class="testURLBar fbInternational" align="center"
             autocompletesearch="FBTestHistory" disablePicker="false"
-            coollapsed="false" label="fbtest.urlbar.label.Test List"
+            collapsed="false" label="fbtest.urlbar.label.Test List"
             barTooltiptext="fbtest.urlbar.tooltip.Test_List_URL"
             pickerTooltiptext="fbtest.cmd.tip.Browse For Test List"/>
 
@@ -179,6 +172,7 @@
     <!-- Status bar info -->
     <statusbar id="statusBar" context="statusBarContextMenu">
         <label id="testCount" tooltiptext="fbtest.tooltip.TestCount" class="fbInternational"/>
+        <label id="disabledTestCount" tooltiptext="fbtest.tooltip.DisabledTestCount" class="fbInternational"/>
         <label id="passingTests" tooltiptext="fbtest.tooltip.Passing" class="fbInternational"/>
         <label id="failingTests" tooltiptext="fbtest.tooltip.Failing" class="fbInternational"/>
         <label id="todoTests" tooltip="todoTestsTooltip"/>

@@ -22,9 +22,16 @@ var cmdLineHandler = Cc["@mozilla.org/commandlinehandler/general-startup;1?type=
 
 var wm = Cc["@mozilla.org/appshell/window-mediator;1"].getService(Ci.nsIWindowMediator);
 
-var getPref = Cu.import("resource://firebug/loader.js", {}).FirebugLoader.getPref; 
+// Make sure PrefLoader variable doesn't leak into the global scope.
+var prefLoaderScope = {};
+Cu.import("resource://firebug/prefLoader.js", prefLoaderScope);
+var PrefLoader = prefLoaderScope.PrefLoader;
+var getPref = PrefLoader.getPref;
 
 Cu.import("resource://firebug/fbtrace.js");
+
+var Locale = Cu.import("resource://firebug/locale.js").Locale;
+Locale.registerStringBundle("chrome://fbtest/locale/fbtest.properties");
 
 // ********************************************************************************************* //
 
@@ -35,47 +42,9 @@ this.onLoad = function()
 
     window.removeEventListener("load", FBTestFirebugOverlay.onLoad, false);
 
-    if (!Firebug.GlobalUI)
-        return;
-
-    // Extend Firebug menu
-    with (Firebug.GlobalUI)
-    {
-        // Extend Firebug global menu (more instances exists).
-        var parents = document.querySelectorAll(".fbFirebugMenuPopup");
-        for each (var parent in parents)
-        {
-            // Open Test Console
-            $menupopupOverlay(parent, [
-                $menuseparator({
-                    insertbefore: "menu_aboutSeparator",
-                }),
-                $menuitem({
-                    id: "menu_openTestConsole",
-                    label: "Open Test Console",
-                    command: "cmd_openTestConsole",
-                    insertbefore: "menu_aboutSeparator",
-                    key: "key_openTestConsole"
-                })
-            ]);
-
-            $command("cmd_openTestConsole", "FBTestFirebugOverlay.open()");
-            $key("key_openTestConsole", "t", "shift", "cmd_openTestConsole");
-
-            // Always Open Test Console (option)
-            var optionsPopup = parent.querySelector("#FirebugMenu_OptionsPopup");
-            $menupopupOverlay(optionsPopup, [
-                $menuitem({
-                    id: "FirebugMenu_Options_alwaysOpenTestConsole",
-                    type: "checkbox",
-                    label: "Always Open Test Console",
-                    oncommand: "FBTestFirebugOverlay.onToggleOption(this)",
-                    insertbefore: "menu_optionsSeparator",
-                    option: "alwaysOpenTestConsole"
-                })
-            ]);
-        }
-    }
+    // Customization of Firebug's menu.
+    var handler = FBTestFirebugOverlay.onFirebugMenuShowing.bind(FBTestFirebugOverlay);
+    document.addEventListener("firebugMenuShowing", handler, false);
 
     if (FBTrace.DBG_FBTEST)
         FBTrace.sysout("FBTest.overlayFirebug.initialize; scope: " + window.location);
@@ -90,7 +59,7 @@ this.onLoad = function()
         // Open console if the command line says so or if the pref says so.
         var cmd = cmdLineHandler.wrappedJSObject;
         if (cmd.runFBTests)
-            FBTestFirebugOverlay.open(cmd.testListURI);
+            FBTestFirebugOverlay.open(cmd.testListURI, cmd.quitAfterRun);
         else if (getPref("alwaysOpenTestConsole"))
             FBTestFirebugOverlay.open();
     }
@@ -102,10 +71,50 @@ this.onLoad = function()
     }
 };
 
+this.onFirebugMenuShowing = function(event)
+{
+    if (!Firebug.BrowserOverlayLib)
+        return;
+
+    var parent = event.detail;
+    var doc = parent.ownerDocument;
+
+    // Extend Firebug menu
+    with (Firebug.BrowserOverlayLib)
+    {
+        // Open Test Console
+        $menupopupOverlay(doc, parent, [
+            $menuseparator(doc, {
+                insertbefore: "menu_firebug_aboutSeparator",
+            }),
+            $menuitem(doc, {
+                id: "menu_openTestConsole",
+                label: "fbtest.Open_Test_Console",
+                command: "cmd_openTestConsole",
+                insertbefore: "menu_firebug_aboutSeparator",
+                key: "key_openTestConsole"
+            })
+        ]);
+
+        // Always Open Test Console (option)
+        var optionsPopup = parent.querySelector("#FirebugMenu_OptionsPopup");
+        $menupopupOverlay(doc, optionsPopup, [
+            $menuitem(doc, {
+                id: "FirebugMenu_Options_alwaysOpenTestConsole",
+                type: "checkbox",
+                label: "fbtest.Always_Open_Test_Console",
+                oncommand: "FBTestFirebugOverlay.onToggleOption(this)",
+                insertbefore: "menu_firebug_optionsSeparator",
+                option: "alwaysOpenTestConsole"
+            })
+        ]);
+    }
+};
+
 this.onToggleOption = function(target)
 {
     var self = this;
-    window.Firebug.GlobalUI.startFirebug(function()
+    window.Firebug.browserOverlay.startFirebug(function()
     {
         Firebug.chrome.onToggleOption(target);
 
@@ -129,7 +138,7 @@ this.close = function()
         consoleWindow.close();
 };
 
-this.open = function(testListURI)
+this.open = function(testListURI, quitAfterRun)
 {
     var consoleWindow = null;
     this.iterateBrowserWindows("FBTestConsole", function(win) {
@@ -139,7 +148,7 @@ this.open = function(testListURI)
 
     // Load Firebug
     var self = this;
-    window.Firebug.GlobalUI.startFirebug(function()
+    window.Firebug.browserOverlay.startFirebug(function()
     {
         // Get the right firebug window. It can be browser.xul or fbMainFrame <iframe>
         var firebugWindow;
@@ -161,7 +170,8 @@ this.open = function(testListURI)
 
         var args = {
             firebugWindow: firebugWindow,
-            testListURI: testListURI
+            testListURI: testListURI,
+            quitAfterRun: quitAfterRun
         };
 
         // Try to connect an existing test-console window first.

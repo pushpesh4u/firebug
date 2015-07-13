@@ -6,17 +6,32 @@
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cr = Components.results;
+const Cu = Components.utils;
 
 const dirService = Cc["@mozilla.org/file/directory_service;1"].getService(Ci.nsIProperties);
 
 // https://developer.mozilla.org/en/Using_JavaScript_code_modules
 var EXPORTED_SYMBOLS = ["Storage", "StorageService", "TextService"];
 
-Components.utils["import"]("resource://firebug/firebug-trace-service.js");
-var FBTrace = traceConsoleService.getTracer("extensions.firebug");
+Cu.import("resource://firebug/fbtrace.js");
+Cu.import("resource://gre/modules/FileUtils.jsm");
+
+var wm = Cc["@mozilla.org/appshell/window-mediator;1"].getService(Ci.nsIWindowMediator);
+
+try
+{
+    Cu["import"]("resource://gre/modules/PrivateBrowsingUtils.jsm");
+}
+catch (err)
+{
+}
 
 // ********************************************************************************************* //
 // Implementation
+
+// xxxHonza: the entire JSM should be converted into AMD.
+// But there could be extensions
+// see: https://groups.google.com/d/msg/firebug/C5dlQ2S1e0U/ZJ76nxtUAAMJ
 
 /**
  * http://dev.w3.org/html5/webstorage/#storage-0
@@ -29,9 +44,11 @@ var FBTrace = traceConsoleService.getTracer("extensions.firebug");
  *     void clear();
  * };
  */
-function Storage(leafName)
+function Storage(leafName, win)
 {
     this.leafName = leafName;
+    this.win = win;
+
     this.objectTable = {};
 }
 
@@ -92,7 +109,7 @@ Storage.prototype =
     {
         this.objectTable = {};
         StorageService.setStorage(this, now);
-    },
+    }
 };
 
 // ********************************************************************************************* //
@@ -103,9 +120,9 @@ Storage.prototype =
  */
 var StorageService =
 {
-    getStorage: function(leafName)
+    getStorage: function(leafName, win)
     {
-        var store = new Storage(leafName);
+        var store = new Storage(leafName, win);
 
         try
         {
@@ -130,16 +147,25 @@ var StorageService =
         if (!store || !store.leafName || !store.objectTable)
             throw new Error("StorageService.setStorage requires Storage Object argument");
 
+        // xxxHonza: writeNow() doesn't check private browsing mode, which is not safe.
+        // But |now| is currently set to true only in clear() method, which works
+        // (and should work I guess) even in private browsing mode.
         if (now)
             ObjectPersister.writeNow(store.leafName,  store.objectTable);
         else
-            ObjectPersister.writeObject(store.leafName,  store.objectTable);
+            ObjectPersister.writeObject(store.leafName,  store.objectTable, store.win);
     },
 
     removeStorage: function(leafName)
     {
-        ObjectPersister.deleteObject(leafname);
+        ObjectPersister.deleteObject(leafName);
     },
+
+    hasStorage: function(leafName)
+    {
+        var file = ObjectPersister.getFile(leafName);
+        return file.exists();
+    }
 };
 
 // ********************************************************************************************* //
@@ -150,39 +176,12 @@ var StorageService =
  */
 var ObjectPersister =
 {
-    getProfileDirectory: function()
-    {
-        var file = dirService.get("ProfD", Ci.nsIFile);
-        return file;
-    },
-
-    getFileInDirectory: function(file, path)  // forward slash separated
-    {
-        var segs = path.split('/');
-        for (var i = 0; i < segs.length; i++)
-        {
-            file.append(segs[i]);
-        }
-        return file;
-    },
-
-    getFileInProfileDirectory: function(path)
-    {
-        // Get persistence file stored within the profile directory.
-        var file = ObjectPersister.getProfileDirectory();
-        file = ObjectPersister.getFileInDirectory(file, path);
-        if (FBTrace.DBG_STORAGE)
-            FBTrace.sysout("ObjectPersister getFileInProfileDirectory("+path+")="+file.path);
-
-        return file;
-    },
-
     readObject: function(leafName)
     {
         if (FBTrace.DBG_STORAGE)
             FBTrace.sysout("ObjectPersister read from leafName "+leafName);
 
-        var file = ObjectPersister.getFileInProfileDirectory("firebug/"+leafName);
+        var file = this.getFile(leafName);
 
         if (!file.exists())
         {
@@ -242,15 +241,23 @@ var ObjectPersister =
         }
     },
 
+    getFile: function(leafName)
+    {
+        return FileUtils.getFile("ProfD", ["firebug", leafName]);
+    },
+
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
     // Batch the writes for each event loop
     writeDelay: 250,
 
-    writeObject: function(leafName, obj)
+    writeObject: function(leafName, obj, win)
     {
-        if (this.isPrivateBrowsing())
-            throw new Error("No storage is written while in private browsing mode");
+        if (this.isPrivateBrowsing(win))
+            return;
+
+        // xxxHonza: see https://code.google.com/p/fbug/issues/detail?id=7561#c8
+        //throw new Error("No storage is written while in private browsing mode");
 
         if (ObjectPersister.flushTimeout)
             return;
@@ -283,7 +290,7 @@ var ObjectPersister =
         {
             // Convert data to JSON.
             var jsonString = JSON.stringify(obj);
-            var file = ObjectPersister.getFileInProfileDirectory("firebug/"+leafName);
+            var file = this.getFile(leafName);
             ObjectPersister.writeTextToFile(file, jsonString);
         }
         catch(exc)
@@ -320,14 +327,47 @@ var ObjectPersister =
         }
     },
 
-    isPrivateBrowsing: function()
+    deleteObject: function(leafName)
     {
+        var file = this.getFile(leafName);
+        return file.remove(false);
+    },
+
+    // xxxHonza: this entire method is duplicated from firebug/lib/privacy module
+    // As soon as this JSM is AMD we should just use firebug/lib/privacy.
+    isPrivateBrowsing: function(win)
+    {
+        try
+        {
+            // If |win| is null, the top most window is used to figure out
+            // whether the private mode is on or off.
+            if (!win)
+                win = wm.getMostRecentWindow("navigator:browser");
+        }
+        catch (e)
+        {
+            if (FBTrace.DBG_ERRORS)
+                FBTrace.sysout("storageService.isPrivateBrowsing; EXCEPTION " + e, e);
+        }
+
+        try
+        {
+            // Get firebugFrame.xul and check privaate mode (it's the same as
+            // for the top parent window).
+            if (typeof PrivateBrowsingUtils != "undefined")
+                return PrivateBrowsingUtils.isWindowPrivate(win);
+        }
+        catch (e)
+        {
+        }
+
         try
         {
             // Unfortunatelly the "firebug/chrome/privacy" module can't be used
             // since this scope is JavaScript code module.
             // xxxHonza: storageService should be converted into AMD (but it's used
-            // in firebug-service, which is also JS code module).
+            // in firebug-service.js, which is also JS code module).
+            // firebug-service.js is gone in JSD2 branch
             var pbs = Components.classes["@mozilla.org/privatebrowsing;1"]
                 .getService(Components.interfaces.nsIPrivateBrowsingService);
             return pbs.privateBrowsingEnabled;
@@ -345,9 +385,7 @@ var ObjectPersister =
 var TextService =
 {
     readText: ObjectPersister.readTextFromFile,
-    writeText: ObjectPersister.writeTextToFile,
-    getProfileDirectory: ObjectPersister.getProfileDirectory,
-    getFileInDirectory: ObjectPersister.getFileInDirectory,
+    writeText: ObjectPersister.writeTextToFile
 };
 
 // ********************************************************************************************* //

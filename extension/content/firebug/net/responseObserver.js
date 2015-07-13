@@ -15,7 +15,7 @@ const Ci = Components.interfaces;
 const Cr = Components.results;
 const Cu = Components.utils;
 
-const PrefService = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch2);
+const PrefService = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
 var redirectionLimit = PrefService.getIntPref("network.http.redirection-limit");
 
 // ********************************************************************************************* //
@@ -27,7 +27,7 @@ var redirectionLimit = PrefService.getIntPref("network.http.redirection-limit");
  * channel. See Firebug.TabCacheModel.onExamineResponse method.
  */
 function ChannelListener(win, request, listener)
-/** lends ChannelListener */
+/** @lends ChannelListener */
 {
     this.window = win;
     this.request = request;
@@ -375,8 +375,8 @@ ChannelListener.prototype =
         }
 
         throw Components.results.NS_NOINTERFACE;
-    },
-}
+    }
+};
 
 // ********************************************************************************************* //
 
@@ -389,7 +389,7 @@ var HttpResponseObserver =
 
         return null;
     }
-}
+};
 
 return HttpResponseObserver;
 

@@ -3,16 +3,19 @@
 define([
     "firebug/lib/trace",
     "firebug/lib/string",
+    "firebug/lib/options",
 ],
-function (FBTrace, Str) {
+function (FBTrace, Str, Options) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
 
-const ioService = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
+var ioService = Cc["@mozilla.org/network/io-service;1"].getService(Ci.nsIIOService);
 
 // ********************************************************************************************* //
 // Implementation
@@ -102,7 +105,7 @@ Url.splitDataURL = function(url)
     return props;
 };
 
-const reSplitFile = /(.*?):\/{2,3}([^\/]*)(.*?)([^\/]*?)($|\?.*)/;
+const reSplitFile = /^([^:]*):\/{2,3}([^\/]*)(.*?)([^\/]*?)($|\?.*)/;
 Url.splitURLTrue = function(url)
 {
     var m = reSplitFile.exec(url);
@@ -138,13 +141,7 @@ Url.isSystemURL = function(url)
         return true;
     else if (url.substr(0, 16) == "chrome://firebug")
         return true;
-    else if (url  == "XPCSafeJSObjectWrapper.cpp")
-        return true;
     else if (url.substr(0, 6) == "about:")
-        return true;
-    else if (url.indexOf("firebug-service.js") != -1)
-        return true;
-    else if (url.indexOf("/modules/debuggerHalter.js") != -1)
         return true;
     else
         return false;
@@ -174,7 +171,7 @@ Url.isSystemPage = function(win)
         FBTrace.sysout("Url.isSystemPage; EXCEPTION document not ready?: " + exc);
         return false;
     }
-}
+};
 
 Url.isSystemStyleSheet = function(sheet)
 {
@@ -195,7 +192,7 @@ Url.getURIHost = function(uri)
     {
         return "";
     }
-}
+};
 
 Url.isLocalURL = function(url)
 {
@@ -225,7 +222,7 @@ Url.getLocalPath = function(url)
 
 /**
  * Mozilla URI from non-web URL
- * @param URL 
+ * @param URL
  * @returns undefined or nsIURI
  */
 Url.getLocalSystemURI = function(url)
@@ -253,7 +250,7 @@ Url.getLocalSystemURI = function(url)
         if (FBTrace.DBG_ERRORS)
             FBTrace.sysout("getLocalSystemURI failed for "+url);
     }
-}
+};
 
 /*
  * Mozilla native path for local URL
@@ -269,14 +266,14 @@ Url.getLocalOrSystemPath = function(url, allowDirectories)
         else
             return file && !file.isDirectory() && file.path;
     }
-}
+};
 
 Url.getLocalOrSystemFile = function(url)
 {
     var uri = Url.getLocalSystemURI(url);
     if (uri instanceof Ci.nsIFileURL)
         return uri.file;
-}
+};
 
 Url.getURLFromLocalFile = function(file)
 {
@@ -290,10 +287,10 @@ Url.getDataURLForContent = function(content, url)
 {
     // data:text/javascript;fileName=x%2Cy.js;baseLineNumber=10,<the-url-encoded-data>
     var uri = "data:text/html;";
-    uri += "fileName="+encodeURIComponent(url)+ ","
+    uri += "fileName="+encodeURIComponent(url)+ ",";
     uri += encodeURIComponent(content);
     return uri;
-},
+};
 
 Url.getDomain = function(url)
 {
@@ -312,6 +309,37 @@ Url.getPrettyDomain = function(url)
     var m = /[^:]+:\/{1,3}(www\.)?([^\/]+)/.exec(url);
     return m ? m[2] : "";
 };
+
+/**
+ * Returns the base URL for a given window
+ * @param {Object} win DOM window
+ * @returns {String} Base URL
+ */
+Url.getBaseURL = function(win)
+{
+    if (!win)
+        return;
+
+    var base = win.document.getElementsByTagName("base").item(0);
+    return base ? base.href : win.location.href;
+};
+
+/**
+ * Returns true if the URL is absolute otherwise false, see the following
+ * examples:
+ *
+ * 1) http://example.com -> true
+ * 2) //myserver/index.html -> true
+ * 3) index.html -> false
+ * 4) /index.html -> false
+ *
+ * @param {String} URL
+ * @returns {Boolean} True if the URL is absolute.
+ */
+Url.isAbsoluteUrl = function(url)
+{
+    return (/^(?:[a-z]+:)?\/\//i.test(url))
+}
 
 Url.absoluteURL = function(url, baseURL)
 {
@@ -359,45 +387,53 @@ Url.absoluteURLWithDots = function(url, baseURL)
     var head = m[1];
     var tail = m[3];
     if (url.substr(0, 2) == "//")
+    {
         return m[2] + url;
+    }
     else if (url[0] == "/")
     {
         return head + url;
     }
     else if (tail[tail.length-1] == "/")
+    {
         return B_head + url;
+    }
     else
     {
         var parts = tail.split("/");
         return head + parts.slice(0, parts.length-1).join("/") + "/" + url;
     }
-}
+};
 
-var reChromeCase = /chrome:\/\/([^/]*)\/(.*?)$/;
-Url.normalizeURL = function(url)  // this gets called a lot, any performance improvement welcome
+/**
+ * xxxHonza: This gets called a lot, any performance improvement welcome.
+ */
+Url.normalizeURL = function(url)
 {
     if (!url)
         return "";
-    // Replace one or more characters that are not forward-slash followed by /.., by space.
-    if (url.length < 255) // guard against monsters.
-    {
-        // Replace one or more characters that are not forward-slash followed by /.., by space.
-        url = url.replace(/[^/]+\/\.\.\//, "", "g");
-        // Issue 1496, avoid #
-        url = url.replace(/#.*/,"");
-        // For some reason, JSDS reports file URLs like "file:/" instead of "file:///", so they
-        // don't match up with the URLs we get back from the DOM
-        url = url.replace(/file:\/([^/])/g, "file:///$1");
-        // For script tags inserted dynamically sometimes the script.fileName is bogus
+
+    // Guard against monsters.
+    if (url.length > 255)
+        return url;
+
+    // Normalize path traversals (a/b/../c -> a/c).
+    while (url.indexOf("/../") !== -1 && url[0] != "/")
+        url = url.replace(/[^\/]+\/\.\.\//g, "");
+
+    // Issue 1496, avoid #
+    url = url.replace(/#.*/, "");
+
+    // For script tags inserted dynamically sometimes the script.fileName is bogus
+    if (url.indexOf("->") !== -1)
         url = url.replace(/[^\s]*\s->\s/, "");
 
-        if (Str.hasPrefix(url, "chrome:"))
+    if (url.startsWith("chrome:"))
+    {
+        var m = /^chrome:\/\/([^\/]*)\/(.*?)$/.exec(url);
+        if (m)
         {
-            var m = reChromeCase.exec(url);  // 1 is package name, 2 is path
-            if (m)
-            {
-                url = "chrome://"+m[1].toLowerCase()+"/"+m[2];
-            }
+            url = "chrome://" + m[1].toLowerCase() + "/" + m[2];
         }
     }
     return url;
@@ -488,7 +524,8 @@ Url.parseURLEncodedText = function(text, noLimit)
         }
     }
 
-    params.sort(function(a, b) { return a.name <= b.name ? -1 : 1; });
+    if (Options.get("netSortPostParameters"))
+        params.sort((a, b) => { return a.name <= b.name ? -1 : 1; });
 
     return params;
 };
@@ -508,6 +545,17 @@ Url.reEncodeURL = function(file, text, noLimit)
     return url;
 };
 
+/**
+ * Extracts the URL from a CSS URL definition.
+ * Example: url(../path/to/file) => ../path/to/file
+ * @param {String} url CSS URL definition
+ * @returns {String} Extracted URL
+ */
+Url.extractFromCSS = function(url)
+{
+    return url.replace(/^url\(["']?(.*?)["']?\)$/, "$1");
+};
+
 Url.makeURI = function(urlString)
 {
     try
@@ -524,7 +572,7 @@ Url.makeURI = function(urlString)
 
         return false;
     }
-}
+};
 
 /**
  * Converts resource: to file: Url.
@@ -541,7 +589,7 @@ Url.resourceToFile = function(resourceURL)
 
     var path = resHandler.getSubstitution(sub).spec;
     return path + split.join("/");
-}
+};
 
 // ********************************************************************************************* //
 // Registration

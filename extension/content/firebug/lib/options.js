@@ -4,34 +4,32 @@ define([
     "firebug/lib/events",
     "firebug/lib/trace"
 ],
-function factoryOptions(Events, FBTrace) {
+function (Events, FBTrace) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
 
-const nsIPrefBranch = Ci.nsIPrefBranch;
-const nsIPrefBranch2 = Ci.nsIPrefBranch2;
-const PrefService = Cc["@mozilla.org/preferences-service;1"];
+var nsIPrefBranch = Ci.nsIPrefBranch;
+var PrefService = Cc["@mozilla.org/preferences-service;1"];
 
-const nsIPrefService = Ci.nsIPrefService;
-const prefService = PrefService.getService(nsIPrefService);
-const prefs = PrefService.getService(nsIPrefBranch2);
+var nsIPrefService = Ci.nsIPrefService;
+var prefService = PrefService.getService(nsIPrefService);
+var prefs = PrefService.getService(nsIPrefBranch);
 
-const getPref = Components.utils.import("resource://firebug/loader.js", {}).FirebugLoader.getPref; 
-
-const prefNames =  // XXXjjb TODO distribute to modules
+var prefNames =  // XXXjjb TODO distribute to modules
 [
     // Global
     "defaultPanelName", "throttleMessages", "textSize", "showInfoTips",
     "commandEditor", "textWrapWidth", "framePosition", "showErrorCount",
-    "activateSameOrigin", "allPagesActivation", "hiddenPanels",
+    "activateSameOrigin", "allPagesActivation",
     "panelTabMinWidth", "sourceLinkLabelWidth", "currentVersion",
-    "useDefaultLocale", "toolbarCustomizationDone", "addonBarOpened",
-    "showBreakNotification", "showStatusIcon", "stringCropLength",
-    "showFirstRunPage",
+    "useDefaultLocale", "toolbarCustomizationDone2",
+    "showBreakNotification", "stringCropLength", "showFirstRunPage",
 
     // Search
     "searchCaseSensitive", "searchGlobal", "searchUseRegularExpression",
@@ -39,9 +37,10 @@ const prefNames =  // XXXjjb TODO distribute to modules
 
     // Console
     "showJSErrors", "showJSWarnings", "showCSSErrors", "showXMLErrors",
-    "showChromeErrors", "showChromeMessages", "showExternalErrors",
+    "showChromeErrors", "showChromeMessages",
     "showXMLHttpRequests", "showNetworkErrors", "tabularLogMaxHeight",
     "consoleFilterTypes", "alwaysShowCommandLine",
+    "commandLineShowCompleterPopup",
 
     // HTML
     "showFullTextNodes", "showCommentNodes",
@@ -53,9 +52,12 @@ const prefNames =  // XXXjjb TODO distribute to modules
     "onlyShowAppliedStyles",
     "showUserAgentCSS",
     "expandShorthandProps",
+    "cssEditMode",
+    "colorDisplay",
+
+    // Computed
     "computedStylesDisplay",
     "showMozillaSpecificStyles",
-    "cssEditMode",
 
     // Script
     "decompileEvals", "replaceTabs", "maxScriptLineLength",
@@ -63,13 +65,13 @@ const prefNames =  // XXXjjb TODO distribute to modules
     // DOM
     "showUserProps", "showUserFuncs", "showDOMProps", "showDOMFuncs", "showDOMConstants",
     "ObjectShortIteratorMax", "showEnumerableProperties", "showOwnProperties",
-    "showInlineEventHandlers",
+    "showInlineEventHandlers", "showClosures",
 
     // Layout
     "showRulers",
 
     // Net
-    "netFilterCategory", "netDisplayedResponseLimit",
+    "netFilterCategories", "netDisplayedResponseLimit",
     "netDisplayedPostBodyLimit", "netPhaseInterval", "sizePrecision",
     "netParamNameLimit", "netShowPaintEvents", "netShowBFCacheResponses",
     "netHtmlPreviewHeight",
@@ -97,6 +99,9 @@ var optionUpdateMap = {};
 var Options =
 /** @lends Options */
 {
+    prefDomain: "extensions.firebug",
+    prefCache: new Map(),
+
     getPrefDomain: function()
     {
         return this.prefDomain;
@@ -146,7 +151,7 @@ var Options =
         var value = this.get(name);
 
         if (FBTrace.DBG_OPTIONS)
-            FBTrace.sysout("options.observe name = value: "+name+"= "+value+"\n");
+            FBTrace.sysout("options.observe name = value: " + name + "= " + value + "\n");
 
         this.updatePref(name, value);
     },
@@ -161,6 +166,9 @@ var Options =
         {
             optionUpdateMap[name] = 1;
             Firebug[name] = value;
+
+            if (this.prefCache.has(name))
+                this.prefCache.set(name, value);
 
             Events.dispatch(this.listeners, "updateOption", [name, value]);
         }
@@ -207,15 +215,11 @@ var Options =
 
     initializePrefs: function()
     {
-        for (var i = 0; i < prefNames.length; ++i)
+        // Write the prefs into the global 'Firebug' scope for backwards compatibility
+        for (var i = 0; i < prefNames.length; i++)
             Firebug[prefNames[i]] = this.getPref(this.prefDomain, prefNames[i]);
 
         prefs.addObserver(this.prefDomain, this, false);
-
-        var basePrefNames = prefNames.length;
-
-        for (var i = basePrefNames; i < prefNames.length; ++i)
-            Firebug[prefNames[i]] = this.getPref(this.prefDomain, prefNames[i]);
 
         if (FBTrace.DBG_OPTIONS)
         {
@@ -229,19 +233,78 @@ var Options =
 
     togglePref: function(name)
     {
-        this.setPref(Options.prefDomain, name, !Firebug[name]);
+        this.set(name, !this.get(name));
     },
 
     get: function(name)
     {
-        return Options.getPref(this.prefDomain, name);
+        if (this.prefCache.has(prefName))
+            return this.prefCache.get(prefName);
+
+        var value =  Options.getPref(this.prefDomain, name);
+
+        var prefName = this.prefDomain + "." + name;
+        this.prefCache.set(prefName, value);
+
+        return value;
     },
 
-    getPref: getPref,
+    getPref: function(prefDomain, name)
+    {
+        var prefName = prefDomain + "." + name;
+
+        var type = prefs.getPrefType(prefName);
+
+        var value = null;
+        if (type == nsIPrefBranch.PREF_STRING)
+            value = prefs.getCharPref(prefName);
+        else if (type == nsIPrefBranch.PREF_INT)
+            value = prefs.getIntPref(prefName);
+        else if (type == nsIPrefBranch.PREF_BOOL)
+            value = prefs.getBoolPref(prefName);
+
+        if (FBTrace.DBG_OPTIONS)
+        {
+            FBTrace.sysout("options.getPref "+prefName+" has type "+
+                this.getPreferenceTypeName(type)+" and value "+value);
+        }
+
+        return value;
+    },
+
+    getDefault: function(name)
+    {
+        return Options.getDefaultPref(this.prefDomain, name);
+    },
+
+    getDefaultPref: function(prefDomain, name)
+    {
+        var defaultPrefs = prefService.getDefaultBranch(prefDomain + ".");
+        var type = defaultPrefs.getPrefType(name);
+
+        var value = null;
+        if (type == nsIPrefBranch.PREF_STRING)
+            value = defaultPrefs.getCharPref(name);
+        else if (type == nsIPrefBranch.PREF_INT)
+            value = defaultPrefs.getIntPref(name);
+        else if (type == nsIPrefBranch.PREF_BOOL)
+            value = defaultPrefs.getBoolPref(name);
+
+        if (FBTrace.DBG_OPTIONS)
+        {
+            FBTrace.sysout("options.getDefaultPref "+prefName+" has type "+
+                this.getPreferenceTypeName(type)+" and value "+value);
+        }
+
+        return value;
+    },
 
     set: function(name, value)
     {
         Options.setPref(Options.prefDomain, name, value);
+
+        var prefName = Options.prefDomain + "." + name;
+        this.prefCache.set(prefName, value);
     },
 
     /**
@@ -261,7 +324,10 @@ var Options =
             return;
 
         if (FBTrace.DBG_OPTIONS)
-            FBTrace.sysout("options.setPref type="+type+" name="+prefName+" value="+value);
+        {
+            FBTrace.sysout("options.setPref type=" + type + " name=" + prefName + " value=" +
+                value);
+        }
     },
 
     setPreference: function(prefName, value, type, prefBranch)
@@ -288,20 +354,19 @@ var Options =
 
     getPreferenceTypeByExample: function(prefType)
     {
+        var type = nsIPrefBranch.PREF_INVALID;
         if (prefType)
         {
             if (prefType === typeof("s"))
-                var type = nsIPrefBranch.PREF_STRING;
+                type = nsIPrefBranch.PREF_STRING;
             else if (prefType === typeof(1))
-                var type = nsIPrefBranch.PREF_INT;
-            else if (prefType === typeof (true))
-                var type = nsIPrefBranch.PREF_BOOL;
-            else
-                var type = nsIPrefBranch.PREF_INVALID;
+                type = nsIPrefBranch.PREF_INT;
+            else if (prefType === typeof(true))
+                type = nsIPrefBranch.PREF_BOOL;
         }
         else
         {
-            var type = prefs.getPrefType(prefName);
+            type = prefs.getPrefType(prefName);
         }
 
         return type;
@@ -315,6 +380,11 @@ var Options =
             return "int";
         else if (prefType == Ci.nsIPrefBranch.PREF_BOOL)
             return "boolean";
+    },
+
+    clear: function(name)
+    {
+        Options.clearPref(Options.prefDomain, name);
     },
 
     clearPref: function(prefDomain, name)
@@ -353,8 +423,8 @@ var Options =
 
     getZoomByTextSize: function(value)
     {
-        var zoom = value >= 0 ? this.positiveZoomFactors[value] :
-            this.negativeZoomFactors[Math.abs(value)];
+        var zoom = value >= 0 ? (this.positiveZoomFactors[value] || 1) :
+            (this.negativeZoomFactors[Math.abs(value)] || 1);
 
         return zoom;
     },
@@ -387,7 +457,16 @@ var Options =
                     FBTrace.sysout("Skipped clearing option: " + i + ") " + preferences[i]);
             }
         }
+
+        // Make sure Firebug object properties that represents preferences are
+        // also updated.
+        this.initializePrefs();
     },
+
+    forceSave: function()
+    {
+        prefs.savePrefFile(null);
+    }
 };
 
 // ********************************************************************************************* //

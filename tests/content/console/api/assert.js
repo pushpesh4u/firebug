@@ -1,18 +1,16 @@
 function runTest()
 {
-    FBTest.sysout("console.assert.START");
-
     FBTest.openNewTab(basePath + "console/api/assert.html", function(win)
     {
-        FBTest.openFirebug();
-        FBTest.enableConsolePanel(function(win)
+        FBTest.enablePanels(["console", "script"], function(win)
         {
             FBTest.setPref("filterSystemURLs", true);
 
             var doNotFilter = FBTest.getPref("filterSystemURLs");
 
             FBTest.compare(true, doNotFilter, "Pref filterSystemURLs must be set true");
-            FBTest.compare(true, FW.Firebug.filterSystemURLs, "Pref Firebug.filterSystemURLs must be set true");
+            FBTest.compare(true, FW.Firebug.Options.get("filterSystemURLs"),
+                "Pref Firebug.filterSystemURLs must be set true");
 
             var config = {tagName: "div", classes: "logRow logRow-errorMessage", counter: 2};
             FBTest.waitForDisplayedElement("console", config, function(row)
@@ -22,11 +20,12 @@ function runTest()
                 FBTest.setPref("filterSystemURLs", false);
                 var filter = FBTest.getPref("filterSystemURLs");
                 FBTest.compare(false, filter, "Pref filterSystemURLs must not be set true");
-                FBTest.compare(false, FW.Firebug.filterSystemURLs, "Pref filterSystemURLs must not be set true");
+                FBTest.compare(false, FW.Firebug.Options.get("filterSystemURLs"),
+                    "Pref filterSystemURLs must not be set true");
                 FBTest.waitForDisplayedElement("console", config, function(row)
                 {
                     verifyConsoleUI(config);
-                    FBTest.testDone("console.assert.DONE");
+                    FBTest.testDone();
                 });
 
                 // Execute test implemented on the test page.
@@ -50,7 +49,7 @@ function verifyConsoleUI(config)
 
     // Verify the first assert message.
     var reExpectedLog1 = new RegExp("negative\\s*console\.assert\\(false,\\s*\"negative\"\\);\\s*" +
-        FW.FBL.$STRF("Line", ["assert.html", 42]).replace(/([\\"'\(\)])/g, "\\$1"));
+        FW.FBL.$STRF("Line", ["assert.html", 43]).replace(/([\\"'\(\)])/g, "\\$1"));
     if (!FBTest.compare(reExpectedLog1, rows[0].textContent,
         "The log must be something like as follows: " +
         "negative    console.assert(false, \"negative\");\r\n" + FW.FBL.$STRF("Line", ["assert.html", 42])))

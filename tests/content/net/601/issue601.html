@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Test Case for Issue #601</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 </head>
 <body>
 
@@ -20,15 +21,15 @@
 <li>Open Console panel or Net panel and see the XHR entry.</li>
 <li>Open the XHR entry and see the Response tab.</li>
 
-<li>The tab should display the same response as here: 
+<li>The tab should display the same response as here:
     <span id="responseData" style="color:green">{response must be displayed here}</span></li>
 </ol>
 
 <button id="testButton" onclick="postRequest()">POST</button>
 
 <p><i>As soon as the user opens the Response tab (of the appropriate XHR entry)
-additional request is made. This requst doesn't use the original post data,
-so the response may be different.</i></p>
+additional request is made. This request doesn't use the original post data,
+so the response might be different.</i></p>
 
 <script type="text/javascript">
 function postRequest(postData, callback)
@@ -72,6 +73,6 @@ function postRequest(postData, callback)
     }
 }
 </script>
-  
+
 </body>
 </html>

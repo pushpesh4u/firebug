@@ -2,6 +2,7 @@
 <html>
 <head>
   <title>Test Case for Issue #846</title>
+  <meta http-equiv="Content-Type" content="text/html; charset=UTF-8"/>
 </head>
 <body>
 
@@ -60,8 +61,6 @@
                     status.innerHTML = (counter+1) + ". request finished - DONE";
                     button.disabled = false;
                     counter = 0;
-
-                    document.setUserData("responses", responses, null);
                 }
             }
         }

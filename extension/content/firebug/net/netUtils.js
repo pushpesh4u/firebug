@@ -6,12 +6,14 @@ define([
     "firebug/lib/events",
     "firebug/lib/url",
     "firebug/chrome/firefox",
+    "firebug/lib/wrapper",
     "firebug/lib/xpcom",
     "firebug/lib/http",
+    "firebug/lib/options",
     "firebug/lib/string",
     "firebug/lib/xml"
 ],
-function(Firebug, Locale, Events, Url, Firefox, Xpcom, Http, Str, Xml) {
+function(Firebug, Locale, Events, Url, Firefox, Wrapper, Xpcom, Http, Options, Str, Xml) {
 
 // ********************************************************************************************* //
 // Constants
@@ -19,12 +21,12 @@ function(Firebug, Locale, Events, Url, Firefox, Xpcom, Http, Str, Xml) {
 const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cr = Components.results;
+const Cu = Components.utils;
 
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 const mimeExtensionMap =
 {
-    "txt": "text/plain",
     "html": "text/html",
     "htm": "text/html",
     "xhtml": "text/html",
@@ -37,20 +39,29 @@ const mimeExtensionMap =
     "gif": "image/gif",
     "png": "image/png",
     "bmp": "image/bmp",
+    "woff": "application/font-woff",
+    "ttf": "application/x-font-ttf",
+    "otf": "application/x-font-otf",
     "swf": "application/x-shockwave-flash",
+    "xap": "application/x-silverlight-app",
     "flv": "video/x-flv",
     "webm": "video/webm"
 };
 
 const mimeCategoryMap =
 {
+    // xxxHonza: note that there is no filter for 'txt' category,
+    // shell we use e.g. 'media' instead?
     "text/plain": "txt",
+
     "application/octet-stream": "bin",
     "text/html": "html",
     "text/xml": "html",
     "application/rss+xml": "html",
     "application/atom+xml": "html",
     "application/xhtml+xml": "html",
+    "application/mathml+xml": "html",
+    "application/rdf+xml": "html",
     "text/css": "css",
     "application/x-javascript": "js",
     "text/javascript": "js",
@@ -62,13 +73,16 @@ const mimeCategoryMap =
     "image/gif": "image",
     "image/png": "image",
     "image/bmp": "image",
-    "application/x-shockwave-flash": "flash",
-    "video/x-flv": "flash",
+    "application/x-shockwave-flash": "plugin",
+    "application/x-silverlight-app": "plugin",
+    "video/x-flv": "media",
     "audio/mpeg3": "media",
     "audio/x-mpeg-3": "media",
     "video/mpeg": "media",
     "video/x-mpeg": "media",
     "video/webm": "media",
+    "video/mp4": "media",
+    "video/ogg": "media",
     "audio/ogg": "media",
     "application/ogg": "media",
     "application/x-ogg": "media",
@@ -78,7 +92,16 @@ const mimeCategoryMap =
     "audio/x-midi": "media",
     "music/crescendo": "media",
     "audio/wav": "media",
-    "audio/x-wav": "media"
+    "audio/x-wav": "media",
+    "application/x-woff": "font",
+    "application/font-woff": "font",
+    "application/x-font-woff": "font",
+    "application/x-ttf": "font",
+    "application/x-font-ttf": "font",
+    "font/ttf": "font",
+    "font/woff": "font",
+    "application/x-otf": "font",
+    "application/x-font-otf": "font"
 };
 
 const fileCategories =
@@ -89,8 +112,9 @@ const fileCategories =
     "js": 1,
     "xhr": 1,
     "image": 1,
-    "flash": 1,
+    "plugin": 1,
     "media": 1,
+    "font": 1,
     "txt": 1,
     "bin": 1
 };
@@ -107,14 +131,40 @@ const textFileCategories =
 const binaryFileCategories =
 {
     "bin": 1,
-    "flash": 1,
+    "plugin": 1,
     "media": 1
 };
 
 const binaryCategoryMap =
 {
     "image": 1,
-    "flash" : 1
+    "plugin" : 1,
+    "font": 1
+};
+
+const requestProps =
+{
+    "allowPipelining": 1,
+    "allowSpdy": 1,
+    "canceled": 1,
+    "channelIsForDownload": 1,
+    "contentCharset": 1,
+    "contentLength": 1,
+    "contentType": 1,
+    "forceAllowThirdPartyCookie": 1,
+    "loadAsBlocking": 1,
+    "loadUnblocked": 1,
+    "localAddress": 1,
+    "localPort": 1,
+    "name": 1,
+    "redirectionLimit": 1,
+    "remoteAddress": 1,
+    "remotePort": 1,
+    "requestMethod": 1,
+    "requestSucceeded": 1,
+    "responseStatus": 1,
+    "responseStatusText": 1,
+    "status": 1,
 };
 
 // ********************************************************************************************* //
@@ -178,8 +228,8 @@ var NetUtils =
         if (!file.postText)
             return file.postText;
 
-        var limit = Firebug.netDisplayedPostBodyLimit;
-        if (file.postText.length > limit && !noLimit)
+        var limit = Options.get("netDisplayedPostBodyLimit");
+        if (limit !== 0 && file.postText.length > limit && !noLimit)
         {
             return Str.cropString(file.postText, limit,
                 "\n\n... " + Locale.$STR("net.postDataSizeLimitMessage") + " ...\n\n");
@@ -230,19 +280,22 @@ var NetUtils =
 
     getMimeType: function(mimeType, uri)
     {
-        if (!mimeType || !(mimeCategoryMap.hasOwnProperty(mimeType)))
-        {
-            var ext = Url.getFileExtension(uri);
-            if (!ext)
-                return mimeType;
-            else
-            {
-                var extMimeType = mimeExtensionMap[ext.toLowerCase()];
-                return extMimeType ? extMimeType : mimeType;
-            }
-        }
-        else
+        // Get rid of optional charset, e.g. "text/html; charset=UTF-8".
+        // We need pure mime type so, we can use it as a key for look up.
+        if (mimeType)
+            mimeType = mimeType.split(";")[0];
+
+        // If the mime-type exists and is known just return it...
+        if (mimeType && mimeCategoryMap.hasOwnProperty(mimeType))
             return mimeType;
+
+        // ... otherwise we need guess it according to the file extension.
+        var ext = Url.getFileExtension(uri);
+        if (!ext)
+            return mimeType;
+
+        var extMimeType = mimeExtensionMap[ext.toLowerCase()];
+        return extMimeType ? extMimeType : mimeType;
     },
 
     getDateFromSeconds: function(s)
@@ -313,43 +366,69 @@ var NetUtils =
         catch (e) { }
     },
 
+    /**
+     * Returns the most appropriate category for a specific request (file).
+     * The logic is as follows:
+     * 1) If the request is an XHR, return 'xhr' as category
+     * 2) Otherwise use the file extension to guess the MIME type.
+     *    This is prefered since MIME types in HTTP requests are often wrong.
+     *    This part is based on the 'mimeExtensionMap' map.
+     * 3) If the file extension is missing or unknown, try to get the MIME type
+     *    from the HTTP request object.
+     * 4) If there is still no MIME type, return an empty category name.
+     * 5) Use the MIME type and look up the right category.
+     *    This part is based on the 'mimeCategoryMap' map.
+     */
     getFileCategory: function(file)
     {
-        if (file.category)
-        {
-            if (FBTrace.DBG_NET)
-                FBTrace.sysout("net.getFileCategory; current: " + file.category + " for: " +
-                    file.href, file);
-            return file.category;
-        }
+        return this.getFileCategories(file)[0];
+    },
+    
+    /**
+     * Returns the categories for a specific request (file).
+     * The logic is as follows:
+     * 1) If the request is an XHR, add 'xhr' as category
+     * 2) Use the file extension to guess the MIME type.
+     *    This is prefered since MIME types in HTTP requests are often wrong.
+     *    This part is based on the 'mimeExtensionMap' map.
+     * 3) If the file extension is missing or unknown, try to get the MIME type
+     *    from the HTTP request object.
+     * 4) If there is still no MIME type, return an empty category name.
+     * 5) Use the MIME type and look up the right category.
+     *    This part is based on the 'mimeCategoryMap' map.
+     */
+    getFileCategories: function(file)
+    {
+        if (file.categories)
+            return file.categories;
 
+        var categories = [];
+        // All XHRs have its own category.
         if (file.isXHR)
-        {
-            if (FBTrace.DBG_NET)
-                FBTrace.sysout("net.getFileCategory; XHR for: " + file.href, file);
-            return file.category = "xhr";
-        }
+            categories.push("xhr");
 
-        if (!file.mimeType)
-        {
-            var ext = Url.getFileExtension(file.href);
-            if (ext)
-                file.mimeType = mimeExtensionMap[ext.toLowerCase()];
-        }
+        // Guess mime-type according to the file extension. Using file extension
+        // is prefered way since mime-types in HTTP requests are often wrong.
+        var mimeType = this.getMimeType(null, file.href);
 
-        /*if (FBTrace.DBG_NET)
-            FBTrace.sysout("net.getFileCategory; " + mimeCategoryMap[file.mimeType] +
-                ", mimeType: " + file.mimeType + " for: " + file.href, file);*/
+        // If no luck with file extension, let's try to get the mime-type from
+        // the request object.
+        if (!mimeType)
+            mimeType = this.getMimeType(file.mimeType, file.href);
 
-        if (!file.mimeType)
-            return "";
+        // No mime-type, no category.
+        if (!mimeType)
+            return categories;
 
-        // Solve cases when charset is also specified, eg "text/html; charset=UTF-8".
-        var mimeType = file.mimeType;
-        if (mimeType)
-            mimeType = mimeType.split(";")[0];
+        // Finally, get the category according to the mime type.
+        categories.push(mimeCategoryMap[mimeType]);
 
-        return (file.category = mimeCategoryMap[mimeType]);
+        return file.categories = categories;
+    },
+
+    getCategory: function(mimeType)
+    {
+        return mimeCategoryMap[mimeType];
     },
 
     getPageTitle: function(context)
@@ -383,9 +462,9 @@ var NetUtils =
 
     getTimeLabel: function(date)
     {
-        var m = date.getMinutes() + "";
-        var s = date.getSeconds() + "";
-        var ms = date.getMilliseconds() + "";
+        var m = String(date.getMinutes());
+        var s = String(date.getSeconds());
+        var ms = String(date.getMilliseconds());
         return "[" + ((m.length > 1) ? m : "0" + m) + ":" +
             ((s.length > 1) ? s : "0" + s) + "." +
             ((ms.length > 2) ? ms : ((ms.length > 1) ? "0" + ms : "00" + ms)) + "]";
@@ -401,7 +480,7 @@ var NetUtils =
             stream.setInputStream(inputStream);
             var encodedResponse = btoa(stream.readBytes(stream.available()));
             var dataURI = "data:" + file.request.contentType + ";base64," + encodedResponse;
-        
+
             var tabBrowser = Firefox.getTabBrowser();
             tabBrowser.selectedTab = tabBrowser.addTab(dataURI);
         }
@@ -445,7 +524,203 @@ var NetUtils =
         }
 
         FBTrace.sysout(msg + " " + file.href, timeLog);
+    },
+
+    /**
+     * Returns a content-accessible 'real object' that is used by 'Inspect in DOM Panel'
+     * or 'Use in Command Line' features. Firebug is primarily a tool for web developers
+     * and thus shouldn't expose internal chrome objects.
+     */
+    getRealObject: function(file, context)
+    {
+        var global = context.getCurrentGlobal();
+        var clone = {};
+
+        function cloneHeaders(headers)
+        {
+            var newHeaders = new global.Array();
+            for (var i=0; headers && i<headers.length; i++)
+            {
+                var header = {name: headers[i].name, value: headers[i].value};
+                header = Wrapper.cloneIntoContentScope(global, header);
+                newHeaders.push(header);
+            }
+            return newHeaders;
+        }
+
+        // Iterate over all properties of the request object (nsIHttpChannel)
+        // and pick only those that are specified in 'requestProps' list.
+        var request = file.request;
+        for (var p in request)
+        {
+            if (!(p in requestProps))
+                continue;
+
+            try
+            {
+                clone[p] = request[p];
+            }
+            catch (err)
+            {
+                // xxxHonza: too much unnecessary output
+                //if (FBTrace.DBG_ERRORS)
+                //    FBTrace.sysout("net.getRealObject EXCEPTION " + err, err);
+            }
+        }
+
+        // Additional props from |file|
+        clone.responseBody = file.responseText;
+        clone.postBody = file.postBody;
+        clone.requestHeaders = cloneHeaders(file.requestHeaders);
+        clone.responseHeaders = cloneHeaders(file.responseHeaders);
+
+        return Wrapper.cloneIntoContentScope(global, clone);
+    },
+
+    generateCurlCommand: function(file, addCompressedArgument)
+    {
+        var command = ["curl"];
+        var ignoredHeaders = {};
+        var inferredMethod = "GET";
+
+        function escapeCharacter(x)
+        {
+            var code = x.charCodeAt(0);
+            if (code < 256)
+            {
+                // Add leading zero when needed to not care about the next character.
+                return code < 16 ? "\\x0" + code.toString(16) : "\\x" + code.toString(16);
+            }
+            code = code.toString(16);
+            return "\\u" + ("0000" + code).substr(code.length, 4);
+        }
+
+        function escape(str)
+        {
+            // String has unicode characters or single quotes
+            if (/[^\x20-\x7E]|'/.test(str))
+            {
+                // Use ANSI-C quoting syntax
+                return "$\'" + str.replace(/\\/g, "\\\\")
+                    .replace(/'/g, "\\\'")
+                    .replace(/\n/g, "\\n")
+                    .replace(/\r/g, "\\r")
+                    .replace(/[^\x20-\x7E]/g, escapeCharacter) + "'";
+            }
+            else
+            {
+                // Use single quote syntax.
+                return "'" + str + "'";
+            }
+        }
+
+        // Create data
+        var data = [];
+        var postText = NetUtils.getPostText(file, this.context, true);
+        var isURLEncodedRequest = NetUtils.isURLEncodedRequest(file, this.context);
+        var isMultipartRequest = NetUtils.isMultiPartRequest(file, this.context);
+
+        if (postText && isURLEncodedRequest || file.method == "PUT")
+        {
+            var lines = postText.split("\n");
+            var params = lines[lines.length - 1];
+
+            data.push("--data");
+            data.push(escape(params));
+
+            // Ignore content length as cURL will resolve this
+            ignoredHeaders["Content-Length"] = true;
+
+            inferredMethod = "POST";
+        }
+        else if (postText && isMultipartRequest)
+        {
+            data.push("--data-binary");
+            data.push(escape(this.removeBinaryDataFromMultipartPostText(postText)));
+
+            ignoredHeaders["Content-Length"] = true;
+            inferredMethod = "POST";
+        }
+
+        // Add URL
+        command.push(escape(file.href));
+
+        // Fix method if request is not a GET or POST request
+        if (file.method != inferredMethod)
+        {
+            command.push("-X");
+            command.push(file.method);
+        }
+
+        // Add request headers
+        // fixme: for multipart request, content-type should be omitted
+        var requestHeaders = file.requestHeaders;
+        var postRequestHeaders = Http.getHeadersFromPostText(file.request, postText);
+        var headers = requestHeaders.concat(postRequestHeaders);
+        for (var i=0; i<headers.length; i++)
+        {
+            var header = headers[i];
+
+            if (header.name in ignoredHeaders)
+                continue;
+
+            command.push("-H");
+            command.push(escape(header.name + ": " + header.value));
+        }
+
+        // Add data
+        command = command.concat(data);
+
+        // Add --compressed
+        if (addCompressedArgument)
+            command.push("--compressed");
+
+        return command.join(" ");
+    },
+
+    removeBinaryDataFromMultipartPostText: function (postText)
+    {
+        var textWithoutBinaryData = "";
+
+        var boundaryRe = /^--.+/gm;
+
+        var boundaryString = boundaryRe.exec(postText)[0];
+
+        var parts = postText.split(boundaryRe);
+
+        var part;
+        var contentDispositionLine;
+
+        for (var i = 0; i<parts.length; i++)
+        {
+            part = parts[i];
+
+            // The second line in a part holds the content disposition form-data
+            contentDispositionLine = part.split("\r\n")[1];
+
+            if (/^Content-Disposition: form-data/im.test(contentDispositionLine))
+            {
+                // filename= tells us that the form data is file input type
+                if (/filename=/im.test(contentDispositionLine))
+                {
+                    // For file input parts
+                    // Remove binary data. Only the Content-Disposition and Content-Type lines
+                    // should remain.
+                    textWithoutBinaryData += boundaryString
+                        + part.match(/[\r\n]+Content-Disposition.+$[\r\n]+Content-Type.+$[\r\n]+/im).toString();
+                }
+                else
+                {
+                    textWithoutBinaryData += boundaryString + part;
+                }
+            }
+        }
+
+        textWithoutBinaryData += boundaryString + "--\r\n";
+
+        return textWithoutBinaryData;
     }
+
 };
 
 // ********************************************************************************************* //

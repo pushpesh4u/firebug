@@ -1,14 +1,19 @@
 /* See license.txt for terms of usage */
 
 define([
+    "firebug/chrome/module",
     "firebug/lib/object",
     "firebug/firebug",
     "firebug/lib/locale",
+    "firebug/lib/options",
     "firebug/lib/url",
     "firebug/chrome/tabWatcher",
     "firebug/chrome/annotations",
+    "firebug/chrome/firefox",
 ],
-function(Obj, Firebug, Locale, Url, TabWatcher, Annotations) {
+function(Module, Obj, Firebug, Locale, Options, Url, TabWatcher, Annotations, Firefox) {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
@@ -23,8 +28,8 @@ const Ci = Components.interfaces;
  *
  * 1) Part of the logic is based on annotation service (see components/firebug-annotations.js)
  *    in order to remember whether Firebug is activated for given site or not.
- *    If there is "firebugged.showFirebug" annotation for a given site Firbug is activated.
- *    If there is "firebugged.closed" annotation for a given site Firbug is not activated.
+ *    If there is "firebugged.showFirebug" annotation for a given site Firebug is activated.
+ *    If there is "firebugged.closed" annotation for a given site Firebug is not activated.
  *
  * 2) Other part is based on extensions.firebug.allPagesActivation option. This option
  *    can be set to the following values:
@@ -35,14 +40,14 @@ const Ci = Components.interfaces;
  *    This logic has higher priority over the URL annotations.
  *    If "off" options is selected, all existing URL annotations are removed.
  */
-Firebug.Activation = Obj.extend(Firebug.Module,
+Firebug.Activation = Obj.extend(Module,
 {
     dispatchName: "activation",
 
     // called once
     initializeUI: function()
     {
-        Firebug.Module.initializeUI.apply(this, arguments);
+        Module.initializeUI.apply(this, arguments);
 
         TabWatcher.initializeUI();
         TabWatcher.addListener(this);
@@ -50,7 +55,7 @@ Firebug.Activation = Obj.extend(Firebug.Module,
 
     shutdown: function()
     {
-        Firebug.Module.shutdown.apply(this, arguments);
+        Module.shutdown.apply(this, arguments);
 
         TabWatcher.removeListener(this);
     },
@@ -58,69 +63,92 @@ Firebug.Activation = Obj.extend(Firebug.Module,
     // true if the Places annotation the URI "firebugged"
     shouldCreateContext: function(browser, url, userCommands)
     {
+        var allPagesActivation = Options.get("allPagesActivation");
         if (FBTrace.DBG_ACTIVATION)
+        {
             FBTrace.sysout("shouldCreateContext allPagesActivation " +
-                Firebug.allPagesActivation);
+                allPagesActivation);
+        }
 
-        if (Firebug.allPagesActivation == "on")
+        if (allPagesActivation === "on")
             return true;
 
-        // if about:blank gets thru, 1483 fails
-        if (Firebug.filterSystemURLs && Url.isSystemURL(url))
-            return false;
+        // This condition has been introduced to disable Firebug for about:blank
+        // which caused issue 1483 to fail. However, there are cases when users
+        // want to inspect even system pages (such as about:blank) and don't want
+        // Firebug UI to be automatically hidden (see issue 5632).
+        // Since issue 1483 doesn't fail anymore, the condition is removed.
+        //if (Options.get("filterSystemURLs") && Url.isSystemURL(url))
+        //    return false;
 
         if (userCommands)
             return true;
 
-        // document.open on a firebugged page
+        // document.open on a Firebugged page
         if (browser && browser.showFirebug && url.substr(0, 8) === "wyciwyg:")
             return true;
 
         try
         {
-            var uri = this.convertToURIKey(url, Firebug.activateSameOrigin);
+            var activateSameOrigin = Options.get("activateSameOrigin");
+            var uri = this.convertToURIKey(url, activateSameOrigin);
             if (!uri)
                 return false;
 
             var hasAnnotation = Annotations.pageHasAnnotation(uri);
 
             if (FBTrace.DBG_ACTIVATION)
-                FBTrace.sysout("shouldCreateContext hasAnnotation "+hasAnnotation +
-                    " for "+uri.spec+" in "+browser.contentWindow.location +
-                    " using activateSameOrigin: "+Firebug.activateSameOrigin);
+            {
+                FBTrace.sysout("shouldCreateContext hasAnnotation " + hasAnnotation +
+                    " for " + uri.spec + " in " +
+                    (browser ? browser.contentWindow.location : "no browser") +
+                    " using activateSameOrigin: " + activateSameOrigin);
+            }
 
-            // Annotated so, return the value.
+            // Annotated, so return the value.
             if (hasAnnotation)
                 return this.checkAnnotation(browser, uri);
 
-            if (browser.FirebugLink) // then Firebug.TabWatcher found a connection
+            // Then Firebug.TabWatcher found a connection.
+            if (browser.FirebugLink)
             {
                 var dst = browser.FirebugLink.dst;
-                var dstURI = this.convertToURIKey(dst.spec, Firebug.activateSameOrigin);
+                var dstURI = this.convertToURIKey(dst.spec, activateSameOrigin);
+
                 if (FBTrace.DBG_ACTIVATION)
+                {
                     FBTrace.sysout("shouldCreateContext found FirebugLink pointing to " +
                         dstURI.spec, browser.FirebugLink);
+                }
 
-                if (dstURI && dstURI.equals(uri)) // and it matches us now
+                // And it matches us now.
+                if (dstURI && dstURI.equals(uri))
                 {
                     var srcURI = this.convertToURIKey(browser.FirebugLink.src.spec,
-                        Firebug.activateSameOrigin);
+                        activateSameOrigin);
 
                     if (srcURI)
                     {
                         if (FBTrace.DBG_ACTIVATION)
+                        {
                             FBTrace.sysout("shouldCreateContext found FirebugLink pointing from " +
                                 srcURI.spec, browser.FirebugLink);
+                        }
 
-                        // and it's on the same domain
+                        // And it's on the same domain.
                         if (srcURI.schemeIs("file") || (dstURI.host == srcURI.host))
                         {
                             hasAnnotation = Annotations.pageHasAnnotation(srcURI);
-                            if (hasAnnotation) // and the source page was annotated.
+                            // And the source page was annotated.
+                            if (hasAnnotation)
                             {
                                 var srcShow = this.checkAnnotation(browser, srcURI);
-                                if (srcShow)  // and the source annotation said show it
-                                    this.watchBrowser(browser);  // so we show dst as well.
+                                // And the source annotation said show it.
+                                if (srcShow)
+                                {
+                                    // So we show dst as well.
+                                    this.watchBrowser(browser);
+                                }
                                 return srcShow;
                             }
                         }
@@ -144,16 +172,22 @@ Firebug.Activation = Obj.extend(Firebug.Module,
                         browser.contentWindow.opener.location);
 
                 if (openerContext)
-                    return true;  // popup windows of Firebugged windows are Firebugged
+                {
+                    // popup windows of Firebugged windows are Firebugged
+                    return true;
+                }
             }
 
-            return false;   // don't createContext
+            // don't createContext
+            return false;
         }
         catch (exc)
         {
             if (FBTrace.DBG_ERRORS)
+            {
                 FBTrace.sysout("pageHasAnnotation FAILS for url: " + url + " which gave uri " +
                     (uri ? uri.spec : "null"), exc);
+            }
         }
     },
 
@@ -162,21 +196,35 @@ Firebug.Activation = Obj.extend(Firebug.Module,
         return this.shouldCreateContext(context.browser, context.getWindowLocation().toString());
     },
 
-    // Firebug is opened in browser
+    // Firebug is opened in the browser.
     watchBrowser: function(browser)
     {
-        var annotation = "firebugged.showFirebug";
-        this.setPageAnnotation(browser.currentURI.spec, annotation);
+        try
+        {
+            var annotation = "firebugged.showFirebug";
+            this.setPageAnnotation(browser.currentURI.spec, annotation);
+        }
+        catch (e)
+        {
+            if (FBTrace.DBG_ERRORS)
+                FBTrace.sysout("activation.watchBrowser; EXCEPTION " + e, e);
+        }
     },
 
-    // Firebug closes in browser
+    // Firebug closes in the browser.
     unwatchBrowser: function(browser, userCommands)
     {
         var uri = browser.currentURI.spec;
-        if (userCommands)  // then mark to not open virally.
+        // Then mark to not open virally.
+        if (userCommands)
+        {
             this.setPageAnnotation(uri, "firebugged.closed");
+        }
         else
-            this.removePageAnnotation(uri); // unmark this URI
+        {
+            // unmark this URI
+            this.removePageAnnotation(uri);
+        }
     },
 
     clearAnnotations: function()
@@ -187,52 +235,58 @@ Firebug.Activation = Obj.extend(Firebug.Module,
         Firebug.connection.dispatch("onClearAnnotations", []);
     },
 
-    // process the URL to canonicalize it. Need not be reversible.
+    // Process the URL to canonicalize it. This needs not be reversible.
     convertToURIKey: function(url, sameOrigin)
     {
-        // Remove fragment, it shouldn't have any impact on the activation.
+        // Remove the fragment. It shouldn't have any impact on the activation.
         url = url.replace(/#.*/, "");
 
         var uri = Url.makeURI(Url.normalizeURL(url));
 
-        if (Firebug.filterSystemURLs && Url.isSystemURL(url))
+        if (Options.get("filterSystemURLs") && Url.isSystemURL(url))
             return uri;
 
-        if (url == "about:blank")  // avoid exceptions.
+        // avoid exceptions
+        if (url == "about:blank")
             return uri;
 
         if (uri && sameOrigin)
         {
             try
             {
-                // returns the string before the path (such as "scheme://user:password@host:port").
+                // Returns the string before the path (such as "scheme://user:password@host:port").
                 var prePath = uri.prePath;
                 var shortURI = Url.makeURI(prePath);
                 if (!shortURI)
                     return uri;
 
-                // annoying "about" URIs throw if you access .host
+                // Annoying "about" URIs throw if .host is accessed
                 if (shortURI.scheme === "about")
                     return shortURI;
 
                 if (shortURI.scheme === "file")
                     return shortURI;
 
+                return shortURI;
+
+                // This makes a.co.uk -> co.uk, mail.cn.mozilla.com -> cn.mozilla.com and
+                // blog.getfirebug.com -> getfirebug.com, which is wrong. See issue 2202.)
+                /*
                 var host = shortURI.host;
                 if (host)
                 {
-                    // Slice the subdomain (if any) from the URL so, activateSameOrigin works for
-                    // domains (including TLD domains). So we want:
+                    // Slice the subdomain (if any) from the URL so that activateSameOrigin works
+                    // for domains (including TLD domains). So we want:
                     // 1) www.google.com -> google.com
                     // 2) www.stuff.co.nz -> stuff.co.nz
                     // 3) getfirebug.com -> getfirebug.com
-                    // 4) xxxHonza: what about: mail.cn.mozilla.com -> mozilla.com ?
                     var levels = host.split('.');
                     if (levels.length > 2)
                         levels = levels.slice(1);
                     shortURI.host = levels.join('.');
                     return shortURI;
                 }
+                */
             }
             catch (exc)
             {
@@ -244,6 +298,7 @@ Firebug.Activation = Obj.extend(Firebug.Module,
                 return uri;
             }
         }
+
         return uri;
     },
 
@@ -255,16 +310,23 @@ Firebug.Activation = Obj.extend(Firebug.Module,
             FBTrace.sysout("shouldCreateContext read back annotation " + annotation +
                 " for uri " + uri.spec);
 
-        // then the user closed Firebug on this page last time
-        if ((Firebug.allPagesActivation != "on") && (annotation.indexOf("closed") > 0))
-            return false;   // annotated as 'closed', don't create
+        // Then the user closed Firebug on this page last time.
+        if (Options.get("allPagesActivation") !== "on" && annotation.indexOf("closed") > 0)
+        {
+            // annotated as 'closed', don't create
+            return false;
+        }
         else
-            return true;    // annotated, createContext
+        {
+            // annotated, createContext
+            return true;
+        }
     },
 
     setPageAnnotation: function(currentURI, annotation)
     {
-        var uri = this.convertToURIKey(currentURI, Firebug.activateSameOrigin);
+        var activateSameOrigin = Options.get("activateSameOrigin");
+        var uri = this.convertToURIKey(currentURI, activateSameOrigin);
         if (uri)
             Annotations.setPageAnnotation(uri, annotation);
 
@@ -272,7 +334,7 @@ Firebug.Activation = Obj.extend(Firebug.Module,
             FBTrace.sysout("setPageAnnotation currentURI " + currentURI + " becomes URI key "+
                 (uri ? uri.spec : "ERROR"));
 
-        if (Firebug.activateSameOrigin)
+        if (activateSameOrigin)
         {
             uri = this.convertToURIKey(currentURI, false);
             if (uri)
@@ -286,11 +348,12 @@ Firebug.Activation = Obj.extend(Firebug.Module,
 
     removePageAnnotation: function(currentURI)
     {
-        var uri = this.convertToURIKey(currentURI, Firebug.activateSameOrigin);
+        var activateSameOrigin = Options.get("activateSameOrigin");
+        var uri = this.convertToURIKey(currentURI, activateSameOrigin);
         if (uri)
             Annotations.removePageAnnotation(uri);
 
-        if (Firebug.activateSameOrigin)
+        if (activateSameOrigin)
         {
             uri = this.convertToURIKey(currentURI, false);
             if (uri)
@@ -301,7 +364,7 @@ Firebug.Activation = Obj.extend(Firebug.Module,
             FBTrace.sysout("Firebug.Activation.unwatchBrowser untagged "+uri.spec);
     },
 
-    // stops at the first fn(uri) that returns a true value
+    // Stops at the first fn(uri) that returns a true value.
     iterateAnnotations: function(fn)
     {
         var annotations = Annotations.getAnnotations(this.annotationName);
@@ -312,6 +375,26 @@ Firebug.Activation = Obj.extend(Firebug.Module,
                 return rc;
         }
     },
+
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    // Options
+
+    /**
+     * After all options (and annotations) have been reset make sure to set
+     * a new annotation for the current URL.
+     * The annotation will ensure Firebug to be visible after refresh.
+     */
+    afterResetAllOptions: function()
+    {
+        // Only reset the annotation if Firebug is active for the current URL.
+        if (!Firebug.currentContext)
+            return;
+
+        var currentURI = Firefox.getCurrentURI();
+        var annotation = "firebugged.showFirebug";
+
+        this.setPageAnnotation(currentURI.spec, annotation);
+    }
 });
 
 // ********************************************************************************************* //

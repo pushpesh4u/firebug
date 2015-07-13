@@ -1,16 +1,13 @@
 function runTest()
 {
-    FBTest.sysout("issue3596.START");
-
     FBTest.openNewTab(basePath + "script/callstack/3596/issue3596.html", function(win)
     {
-        FBTest.openFirebug();
         FBTest.enableScriptPanel(function(win)
         {
             var panel = FW.Firebug.chrome.selectPanel("script");
 
             // Asynchronously wait for break in debugger.
-            FBTest.waitForBreakInDebugger(FW.Firebug.chrome, 18, false, function(row)
+            FBTest.waitForBreakInDebugger(FW.Firebug.chrome, 19, false, function(row)
             {
                 var stackPanel = FW.Firebug.chrome.selectSidePanel("callstack");
                 var panelNode = stackPanel.panelNode;
@@ -48,7 +45,7 @@ function runTest()
 
                 // Finish the test.
                 FBTest.clickContinueButton();
-                FBTest.testDone("issue3596.DONE");
+                FBTest.testDone();
             });
 
             // Run test to break in debugger.

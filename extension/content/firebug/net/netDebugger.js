@@ -1,6 +1,7 @@
 /* See license.txt for terms of usage */
 
 define([
+    "firebug/chrome/rep",
     "firebug/lib/object",
     "firebug/firebug",
     "firebug/lib/domplate",
@@ -11,11 +12,15 @@ define([
     "firebug/lib/dom",
     "firebug/lib/array",
     "firebug/net/netUtils",
+    "firebug/debugger/breakpoints/breakpointGroup",
 ],
-function(Obj, Firebug, Domplate, Locale, Events, Url, Css, Dom, Arr, NetUtils) {
+function(Rep, Obj, Firebug, Domplate, Locale, Events, Url, Css, Dom, Arr, NetUtils,
+    BreakpointGroup) {
 
 // ********************************************************************************************* //
 // Constants
+
+var {domplate, DIV, SPAN, TR, P, A, INPUT} = Domplate;
 
 const Cc = Components.classes;
 const Ci = Components.interfaces;
@@ -31,7 +36,7 @@ function NetBreakpointGroup()
     this.breakpoints = [];
 }
 
-NetBreakpointGroup.prototype = Obj.extend(new Firebug.Breakpoint.BreakpointGroup(),
+NetBreakpointGroup.prototype = Obj.extend(new BreakpointGroup(),
 {
     name: "netBreakpoints",
     title: Locale.$STR("net.label.XHR Breakpoints"),
@@ -85,17 +90,19 @@ Breakpoint.prototype =
             // The properties of scope are all strings; we pass them in then
             // unpack them using 'with'. The function is called immediately.
             var expr = "(function (){var scope = " + JSON.stringify(scope) +
-                "; with (scope) { return  " + this.condition + ";}})();"
+                "; with (scope) { return  " + this.condition + ";}})();";
 
             // The callbacks will set this if the condition is true or if the eval faults.
             delete context.breakingCause;
 
-            var rc = Firebug.CommandLine.evaluate(expr, context, null, context.window,
+            Firebug.CommandLine.evaluate(expr, context, null, context.window,
                 this.onEvaluateSucceeds, this.onEvaluateFails );
 
             if (FBTrace.DBG_NET)
-                FBTrace.sysout("net.evaluateCondition; rc " + rc, {expr: expr,scope: scope,
+            {
+                FBTrace.sysout("net.evaluateCondition", {expr: expr, scope: scope,
                     json: JSON.stringify(scope)});
+            }
 
             return !!context.breakingCause;
         }
@@ -129,25 +136,24 @@ Breakpoint.prototype =
             prevValue: this.condition,
             newValue:result
         };
-    },
-}
+    }
+};
 
 // ********************************************************************************************* //
 // Breakpoint UI
 
-with (Domplate) {
-var BreakpointRep = domplate(Firebug.Rep,
+var BreakpointRep = domplate(Rep,
 {
     inspectable: false,
 
     tag:
-        DIV({"class": "breakpointRow focusRow", _repObject: "$bp",
+        DIV({"class": "breakpointRow focusRow", $disabled: "$bp|isDisabled", _repObject: "$bp",
             role: "option", "aria-checked": "$bp.checked"},
-            DIV({"class": "breakpointBlockHead", onclick: "$onEnable"},
+            DIV({"class": "breakpointBlockHead"},
                 INPUT({"class": "breakpointCheckbox", type: "checkbox",
-                    _checked: "$bp.checked", tabindex : "-1"}),
+                    _checked: "$bp.checked", tabindex: "-1", onclick: "$onEnable"}),
                 SPAN({"class": "breakpointName", title: "$bp|getTitle"}, "$bp|getName"),
-                IMG({"class": "closeButton", src: "blank.gif", onclick: "$onRemove"})
+                SPAN({"class": "closeButton", onclick: "$onRemove"})
             ),
             DIV({"class": "breakpointCondition"},
                 SPAN("$bp.condition")
@@ -162,6 +168,11 @@ var BreakpointRep = domplate(Firebug.Rep,
     getName: function(bp)
     {
         return Url.getFileName(bp.href);
+    },
+
+    isDisabled: function(bp)
+    {
+        return !bp.checked;
     },
 
     onRemove: function(event)
@@ -192,29 +203,34 @@ var BreakpointRep = domplate(Firebug.Rep,
                 file.row.removeAttribute("breakpoint");
                 file.row.removeAttribute("disabledBreakpoint");
             }
-        })
+        });
     },
 
     onEnable: function(event)
     {
         var checkBox = event.target;
-        if (!Css.hasClass(checkBox, "breakpointCheckbox"))
-            return;
+        var bpRow = Dom.getAncestorByClass(checkBox, "breakpointRow");
+
+        if (checkBox.checked)
+        {
+            Css.removeClass(bpRow, "disabled");
+            bpRow.setAttribute("aria-checked", "true");
+        }
+        else
+        {
+            Css.setClass(bpRow, "disabled");
+            bpRow.setAttribute("aria-checked", "false");
+        }
+
+        var bp = bpRow.repObject;
+        bp.checked = checkBox.checked;
 
         var bpPanel = Firebug.getElementPanel(event.target);
         var context = bpPanel.context;
 
-        var bp = Dom.getAncestorByClass(checkBox, "breakpointRow").repObject;
-        bp.checked = checkBox.checked;
-
         var panel = context.getPanel(panelName, true);
         if (!panel)
             return;
-
-        // xxxsz: Needs a better way to update display of breakpoint than invalidate
-        // the whole panel's display
-        // xxxHonza
-        panel.context.invalidatePanels("breakpoints");
 
         panel.enumerateRequests(function(file)
         {
@@ -227,7 +243,7 @@ var BreakpointRep = domplate(Firebug.Rep,
     {
         return object instanceof Breakpoint;
     }
-})};
+});
 
 // ********************************************************************************************* //
 // Registration

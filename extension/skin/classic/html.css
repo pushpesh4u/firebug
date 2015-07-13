@@ -1,7 +1,7 @@
 /* See license.txt for terms of usage */
 
 .panelNode-html {
-    -moz-box-sizing: padding-box;
+    box-sizing: border-box;
     padding: 4px 0 0 2px;
     word-wrap: break-word;
 }
@@ -22,7 +22,8 @@
     left: 0px;
     top: 0px;
     width: 14px;
-    height: 14px;
+    height: 1em;
+    padding: 4px 0;
 }
 
 .nodeChildBox {
@@ -58,10 +59,15 @@
 .nodeComment {
     margin: 0 2px;
     vertical-align: top;
+    unicode-bidi: embed;
 }
 
 .nodeText {
     color: #333333;
+}
+
+.panelNode-html .nodeBracket {
+    cursor: pointer;
 }
 
 .documentNodeBox {
@@ -165,7 +171,11 @@
 .nodeBox.nodeHidden.selected > .nodeLabel > .nodeLabelBox,
 .nodeBox.nodeHidden.selected > .nodeLabel > .nodeLabelBox > .nodeTag,
 .nodeBox.nodeHidden.selected > .nodeLabel > .nodeLabelBox > .nodeAttr > .nodeValue,
-.nodeBox.nodeHidden.selected > .nodeLabel > .nodeLabelBox > .nodeText {
+.nodeBox.nodeHidden.selected > .nodeLabel > .nodeLabelBox > .nodeText,
+.nodeBox.nodeHidden .nodeBox.selected > .nodeLabel > .nodeLabelBox,
+.nodeBox.nodeHidden .nodeBox.selected > .nodeLabel > .nodeLabelBox > .nodeTag,
+.nodeBox.nodeHidden .nodeBox.selected > .nodeLabel > .nodeLabelBox > .nodeAttr > .nodeValue,
+.nodeBox.nodeHidden .nodeBox.selected > .nodeLabel > .nodeLabelBox > .nodeText {
     color: SkyBlue !important;
 }
 
@@ -208,32 +218,4 @@
 
 .useA11y .nodeLabelBox:focus {
     outline: none;
-}
-
-/************************************************************************************************/
-
-.breakpointCode .twisty {
-    display: none;
-}
-
-.breakpointCode .nodeBox.containerNodeBox,
-.breakpointCode .nodeLabel {
-    padding-left: 0px;
-    margin-left: 0px;
-    font-family: monospace !important;
-}
-
-.breakpointCode .nodeTag,
-.breakpointCode .nodeAttr,
-.breakpointCode .nodeText,
-.breakpointCode .nodeValue,
-.breakpointCode .nodeLabel {
-    color: DarkGreen !important;
-}
-
-.breakpointMutationType {
-    position: absolute;
-    top: 4px;
-    right: 20px;
-    color: gray;
 }

@@ -1,18 +1,19 @@
 /* See license.txt for terms of usage */
 
 define([
+    "firebug/chrome/panel",
     "firebug/lib/object",
     "firebug/firebug",
     "firebug/trace/debug",
 ],
-function(Obj, Firebug, Debug) {
+function(Panel, Obj, Firebug, Debug) {
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // This is a panel implemented as its own browser with its own URL
 
 Firebug.PluginPanel = function() {};
 
-Firebug.PluginPanel.prototype = Obj.extend(Firebug.Panel,
+Firebug.PluginPanel.prototype = Obj.extend(Panel,
 {
     createBrowser: function()
     {
@@ -39,7 +40,10 @@ Firebug.PluginPanel.prototype = Obj.extend(Firebug.Panel,
     browserReady: function()
     {
         this.browser.removeEventListener("DOMContentLoaded", this.browserReady, false);
-        if (FBTrace.DBG_INITIALIZE) FBTrace.sysout("plugin.browserReady DOMContentLoaded addEventListener\n");
+
+        if (FBTrace.DBG_INITIALIZE)
+            FBTrace.sysout("plugin.browserReady DOMContentLoaded addEventListener");
+
         this.innerPanel = this.browser.contentWindow.FirebugPanel; // XXXjjb ?
         if (this.visible)
         {
@@ -49,19 +53,19 @@ Firebug.PluginPanel.prototype = Obj.extend(Firebug.Panel,
         }
     },
 
-    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
     // extends Panel
 
     initialize: function()
     {
         this.browserReady = Obj.bindFixed(this.browserReady, this);
-        Firebug.Panel.initialize.apply(this, arguments);
+        Panel.initialize.apply(this, arguments);
     },
 
     destroy: function(state)
     {
         this.destroyBrowser();
-        Firebug.Panel.destroy.apply(this, arguments);
+        Panel.destroy.apply(this, arguments);
     },
 
     show: function(state)
@@ -115,7 +119,7 @@ Firebug.PluginPanel.prototype = Obj.extend(Firebug.Panel,
     }
 });
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 
 function innerCall(innerPanel, name, args)
 {
@@ -129,10 +133,10 @@ function innerCall(innerPanel, name, args)
     }
 }
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Registration
 
 return Firebug.PluginPanel;
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 });

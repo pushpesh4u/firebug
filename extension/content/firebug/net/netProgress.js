@@ -6,17 +6,18 @@ define([
     "firebug/lib/locale",
     "firebug/lib/events",
     "firebug/lib/url",
-    "firebug/js/sourceLink",
+    "firebug/debugger/script/sourceLink",
     "firebug/lib/http",
     "firebug/lib/css",
     "firebug/chrome/window",
     "firebug/lib/string",
     "firebug/lib/array",
+    "firebug/lib/options",
     "firebug/lib/system",
     "firebug/net/netUtils"
 ],
 function(Obj, Firebug, Locale, Events, Url, SourceLink, Http, Css, Win, Str,
-    Arr, System, NetUtils) {
+    Arr, Options, System, NetUtils) {
 
 // ********************************************************************************************* //
 // Constants
@@ -25,14 +26,11 @@ const Cc = Components.classes;
 const Ci = Components.interfaces;
 const Cr = Components.results;
 
-const CacheService = Cc["@mozilla.org/network/cache-service;1"];
-
 // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
 const reIgnore = /about:|javascript:|resource:|chrome:|jar:/;
-const reResponseStatus = /HTTP\/1\.\d\s(\d+)\s(.*)/;
+const reResponseStatus = /HTTP\/\d\.\d\s(\d+)\s(.*)/;
 
-var cacheSession = null;
 var panelName = "net";
 
 // ********************************************************************************************* //
@@ -118,7 +116,9 @@ NetProgress.prototype =
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
-    startFile: function startFile(request, win)
+    requestNumber: 1,
+
+    openingFile: function openingFile(request, win)
     {
         var file = this.getRequestFile(request, win);
         if (file)
@@ -127,6 +127,13 @@ NetProgress.prototype =
             file.urlParams = Url.parseURLParams(file.href);
             this.breakOnXHR(file);
         }
+    },
+
+    startFile: function startFile(request, win)
+    {
+        // Called asynchronously since Fx17, so can't be used for Break on XHR,
+        // since JS stack is not available at the moment.
+        // See https://bugzilla.mozilla.org/show_bug.cgi?id=800799
     },
 
     requestedHeaderFile: function requestedHeaderFile(request, time, win, xhr, extraStringData)
@@ -300,7 +307,7 @@ NetProgress.prototype =
             if (info.responseHeaders)
                 file.responseHeaders = info.responseHeaders;
 
-            // Get also request headers (and perhaps also responseHeaders, they won't be 
+            // Get also request headers (and perhaps also responseHeaders, they won't be
             // replaced if already available).
             NetUtils.getHttpHeaders(request, file, this.context);
 
@@ -331,7 +338,7 @@ NetProgress.prototype =
             this.endLoad(file);
 
             // If there is a network error, log it into the Console panel.
-            if (Firebug.showNetworkErrors && Firebug.NetMonitor.NetRequestEntry.isError(file))
+            if (Options.get("showNetworkErrors") && Firebug.NetMonitor.NetRequestEntry.isError(file))
             {
                 Firebug.Errors.increaseCount(this.context);
                 var message = "NetworkError: " + Firebug.NetMonitor.NetRequestEntry.getStatus(file) + " - "+file.href;
@@ -372,6 +379,20 @@ NetProgress.prototype =
             file.fromBFCache = true;
             file.fromCache = true;
             file.aborted = false;
+
+            try
+            {
+                if (request instanceof Ci.nsIApplicationCacheChannel)
+                {
+                    if (request.loadedFromApplicationCache)
+                        file.fromAppCache = true;
+                }
+            }
+            catch (e)
+            {
+                if (FBTrace.DBG_ERRORS)
+                    FBTrace.sysout("net.respondedCacheFile ERROR " + e, e);
+            }
 
             if (request.contentLength >= 0)
                 file.size = request.contentLength;
@@ -416,7 +437,7 @@ NetProgress.prototype =
             }
         }
 
-        // Don't update the UI now (optimalization).
+        // Don't update the UI now (optimization).
         return null;
     },
 
@@ -458,7 +479,7 @@ NetProgress.prototype =
                      getPrintableTime() + ", " + request.URI.path, file);
         }
 
-        // Don't update the UI now (optimalization).
+        // Don't update the UI now (optimization).
         return null;
     },
 
@@ -469,7 +490,7 @@ NetProgress.prototype =
         logTime(file, "connectingFile", time);
 
         // Resolving, connecting and connected can come after the file is loaded
-        // (closedFile received). This happens if the response is coming from the 
+        // (closedFile received). This happens if the response is coming from the
         // cache. Just ignore it.
         if (file && file.loaded)
             return null;
@@ -483,7 +504,7 @@ NetProgress.prototype =
             file.waitingForTime = time; // in case waiting-for would never came.
         }
 
-        // Don't update the UI now (optimalization).
+        // Don't update the UI now (optimization).
         return null;
     },
 
@@ -504,7 +525,7 @@ NetProgress.prototype =
             file.waitingForTime = time; // in case waiting-for would never came.
         }
 
-        // Don't update the UI now (optimalization).
+        // Don't update the UI now (optimization).
         return null;
     },
 
@@ -715,7 +736,7 @@ NetProgress.prototype =
             return;
 
         var phase = this.context.netProgress.currentPhase;
-        var timeStamp = phase.addTimeStamp("MozAfterPaint", "netPaintBar");
+        var timeStamp = phase.addTimeStamp(Locale.$STR("requestinfo.AfterPaint"), "netPaintBar");
         timeStamp.time = time;
 
         // Return the first file, so the layout is updated. I can happen that the
@@ -754,7 +775,7 @@ NetProgress.prototype =
         // Keep the information also in the phase for now, NetExport and other could need it.
         firstPhase.windowLoadTime = time;
 
-        var timeStamp = firstPhase.addTimeStamp("load", "netWindowLoadBar");
+        var timeStamp = firstPhase.addTimeStamp(Locale.$STR("requestinfo.WindowLoad"), "netWindowLoadBar");
         timeStamp.time = time;
 
         // Return the first file, so the layout is updated. I can happen that the
@@ -777,7 +798,7 @@ NetProgress.prototype =
         // Keep the information also in the phase for now, NetExport and other could need it.
         firstPhase.contentLoadTime = time;
 
-        var timeStamp = firstPhase.addTimeStamp("DOMContentLoaded", "netContentLoadBar");
+        var timeStamp = firstPhase.addTimeStamp(Locale.$STR("requestinfo.ContentLoad"), "netContentLoadBar");
         timeStamp.time = time;
 
         return null;
@@ -816,6 +837,8 @@ NetProgress.prototype =
         }
 
         file.request = request;
+        file.requestNumber = this.requestNumber;
+        this.requestNumber++;
         this.requests.push(request);
         this.files.push(file);
 
@@ -901,7 +924,7 @@ NetProgress.prototype =
             // If the new request has been started within a "phaseInterval" after the
             // previous reqeust has been started, associate it with the current phase;
             // otherwise create a new phase.
-            var phaseInterval = Firebug.netPhaseInterval;
+            var phaseInterval = Options.get("netPhaseInterval");
             var lastStartTime = this.currentPhase.lastStartTime;
             if (phaseInterval > 0 && this.loaded && file.startTime - lastStartTime >= phaseInterval)
                 this.startPhase(file);
@@ -997,7 +1020,7 @@ NetFile.prototype =
     getFileLink: function(message)
     {
         // this.SourceLink = function(url, line, type, object, instance)
-        var link = new SourceLink.SourceLink(this.href, null, "net", this.request);
+        var link = new SourceLink(this.href, null, "net", this.request);
         return link;
     },
 
@@ -1039,26 +1062,26 @@ Firebug.NetFile = NetFile;
  */
 function NetPhase(file)
 {
-  // Start time of the phase. Remains the same, even if the file
-  // is removed from the log (due to a max limit of entries).
-  // This ensures stability of the time line.
-  this.startTime = file.startTime;
+    // Start time of the phase. Remains the same, even if the file
+    // is removed from the log (due to a max limit of entries).
+    // This ensures stability of the time line.
+    this.startTime = file.startTime;
 
-  // The last finished request (file) in the phase.
-  this.lastFinishedFile = null;
+    // The last finished request (file) in the phase.
+    this.lastFinishedFile = null;
 
-  // Set to true if the phase needs to be updated in the UI.
-  this.invalidPhase = null;
+    // Set to true if the phase needs to be updated in the UI.
+    this.invalidPhase = null;
 
-  // List of files associated with this phase.
-  this.files = [];
+    // List of files associated with this phase.
+    this.files = [];
 
-  // List of paint events.
-  this.windowPaints = [];
+    // List of paint events.
+    this.windowPaints = [];
 
-  this.timeStamps = [];
+    this.timeStamps = [];
 
-  this.addFile(file);
+    this.addFile(file);
 }
 
 NetPhase.prototype =
@@ -1126,134 +1149,10 @@ NetPhase.prototype =
 
 function getCacheEntry(file, netProgress)
 {
-    // Bail out if the cache is disabled.
-    if (!Firebug.NetMonitor.BrowserCache.isEnabled())
-        return;
-
-    // Don't request the cache entry twice.
-    if (file.cacheEntryRequested)
-        return;
-
-    file.cacheEntryRequested = true;
-
-    if (FBTrace.DBG_NET_EVENTS)
-        FBTrace.sysout("net.getCacheEntry for file.href: " + file.href + "\n");
-
-    // Pause first because this is usually called from stopFile, at which point
-    // the file's cache entry is locked
-    setTimeout(function()
-    {
-        try
-        {
-            delayGetCacheEntry(file, netProgress);
-        }
-        catch (exc)
-        {
-            if (exc.name != "NS_ERROR_CACHE_KEY_NOT_FOUND")
-            {
-                if (FBTrace.DBG_ERRORS)
-                    FBTrace.sysout("net.delayGetCacheEntry FAILS " + file.href, exc);
-            }
-        }
-    });
-}
-
-function delayGetCacheEntry(file, netProgress)
-{
-    if (FBTrace.DBG_NET_EVENTS)
-        FBTrace.sysout("net.delayGetCacheEntry for file.href=" + file.href + "\n");
-
-    // Init cache session.
-    if (!cacheSession)
-    {
-        var cacheService = CacheService.getService(Ci.nsICacheService);
-        cacheSession = cacheService.createSession("HTTP", Ci.nsICache.STORE_ANYWHERE, true);
-        cacheSession.doomEntriesIfExpired = false;
-    }
-
-    cacheSession.asyncOpenCacheEntry(file.href, Ci.nsICache.ACCESS_READ,
-    {
-        onCacheEntryAvailable: function(descriptor, accessGranted, status)
-        {
-            if (FBTrace.DBG_NET_EVENTS)
-                FBTrace.sysout("net.onCacheEntryAvailable for file.href=" + file.href + "\n");
-
-            if (descriptor)
-            {
-                if (file.size <= 0)
-                    file.size = descriptor.dataSize;
-
-                if (descriptor.lastModified && descriptor.lastFetched &&
-                    descriptor.lastModified < Math.floor(file.startTime/1000)) {
-                    file.fromCache = true;
-                }
-
-                file.cacheEntry = [
-                  { name: "Last Modified",
-                    value: NetUtils.getDateFromSeconds(descriptor.lastModified)
-                  },
-                  { name: "Last Fetched",
-                    value: NetUtils.getDateFromSeconds(descriptor.lastFetched)
-                  },
-                  { name: "Expires",
-                    value: NetUtils.getDateFromSeconds(descriptor.expirationTime)
-                  },
-                  { name: "Data Size",
-                    value: descriptor.dataSize
-                  },
-                  { name: "Fetch Count",
-                    value: descriptor.fetchCount
-                  },
-                  { name: "Device",
-                    value: descriptor.deviceID
-                  }
-                ];
-
-                // Get contentType from the cache.
-                try
-                {
-                    var value = descriptor.getMetaDataElement("response-head");
-                    var contentType = getContentTypeFromResponseHead(value);
-                    file.mimeType = NetUtils.getMimeType(contentType, file.href);
-                }
-                catch (e)
-                {
-                    if (FBTrace.DBG_ERRORS)
-                        FBTrace.sysout("net.delayGetCacheEntry; EXCEPTION ", e);
-                }
-
-                descriptor.close();
-                netProgress.update(file);
-            }
-
-            getCachedHeaders(file);
-        }
-    });
-}
-
-function getCachedHeaders(file)
-{
-    // Cached headers are important only if the reqeust comes from the cache.
-    if (!file.fromCache)
-        return;
-
-    // The request is containing cached headers now. These will be also displayed
-    // within the Net panel.
-    var cache = {};
-    NetUtils.getHttpHeaders(file.request, cache);
-    file.cachedResponseHeaders = cache.responseHeaders;
-}
-
-function getContentTypeFromResponseHead(value)
-{
-    var values = value.split("\r\n");
-    for (var i=0; i<values.length; i++)
-    {
-        var option = values[i].split(": ");
-        var headerName = option[0];
-        if (headerName && headerName.toLowerCase() == "content-type")
-            return option[1];
-    }
+    // xxxHonza: dependency on NetCacheReader can't be used in this module
+    // since it causes cycle dependency problem. So, use the module through
+    // NetMonitor namespace.
+    Firebug.NetMonitor.NetCacheReader.requestCacheEntry(file, netProgress);
 }
 
 // ********************************************************************************************* //

@@ -1,13 +1,12 @@
 // 1) Load Test case page.
 // 2) Enable Net panel
 // 3) Add "load" listener to the target iframe so, the test knows when
-//    the reponse for submitted form is received. 
+//    the reponse for submitted form is received.
 // 4) Check the Post info UI.
 
 var panel = null;
 function runTest()
 {
-    FBTest.sysout("issue2221.START");
     FBTest.openNewTab(basePath + "net/2221/issue2221.html", function(win)
     {
         FBTest.enableNetPanel(function(win)
@@ -65,5 +64,5 @@ function onLoadResponse()
         }
     }
 
-    FBTest.testDone("issue2221.DONE");
+    FBTest.testDone();
 }

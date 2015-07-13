@@ -1,6 +1,10 @@
 /* See license.txt for terms of usage */
 
-define([], function() {
+define([
+],
+function() {
+
+"use strict";
 
 // ********************************************************************************************* //
 // Constants
@@ -17,7 +21,7 @@ var Xpcom = {};
 /**
  * Returns required XPCOM service
  * @param {Object} cName Name of the service.
- * @param {Object} ifaceName Name of the required interface 
+ * @param {Object} ifaceName Name of the required interface
  */
 Xpcom.CCSV = function(cName, ifaceName)
 {
@@ -78,6 +82,7 @@ Xpcom.QI = function(obj, iface)
 };
 
 // ********************************************************************************************* //
+// Registration
 
 return Xpcom;
 

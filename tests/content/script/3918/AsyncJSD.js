@@ -6,7 +6,6 @@
  */
 function runTest()
 {
-    FBTest.sysout("AsyncJSD.START");
     FBTest.disableAllPanels();
     FBTest.progress("All panels start disabled");
     FBTest.setPref("activateSameOrigin", false);
@@ -15,9 +14,10 @@ function runTest()
     FBTest.openNewTab(basePath + "script/3918/AsyncJSDPage.html", function(win)
     {
         FBTest.progress("opened tab for "+win.location);
-        FBTest.openFirebug();
-
+        FBTest.openFirebug(function()
+        {
             FBTest.progress("Script panels should be disabled: check it");
+
             // All panels must be disabled.
             checkIsDisabled(FW.FBL.$STR("Panel-script"), FW.Firebug.Debugger);
 
@@ -28,19 +28,20 @@ function runTest()
             {
                 enable(FW.FBL.$STR("Panel-script"), FW.Firebug.Debugger);
 
-                FBTest.reload(function ()
+                FBTest.reload(function()
                 {
                     FBTest.progress("reloaded, check isEnabled");
                     // All panels must be still enabled.
                     checkIsEnabled(FW.FBL.$STR("Panel-script"), FW.Firebug.Debugger);
 
-                    FBTest.testDone("AsyncJSD.DONE");
+                    FBTest.testDone();
                 });
             }
             catch (err)
             {
                 FBTest.sysout("exception", err);
             }
+        });
     });
 }
 

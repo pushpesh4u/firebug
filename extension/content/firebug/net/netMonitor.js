@@ -1,6 +1,7 @@
 /* See license.txt for terms of usage */
 
 define([
+    "firebug/chrome/activableModule",
     "firebug/lib/object",
     "firebug/firebug",
     "firebug/chrome/firefox",
@@ -15,12 +16,13 @@ define([
     "firebug/net/netUtils",
     "firebug/net/netDebugger",
     "firebug/lib/events",
+    "firebug/lib/locale",
     "firebug/trace/traceListener",
     "firebug/trace/traceModule"
 ],
-function(Obj, Firebug, Firefox, Options, Win, Str, Persist, NetHttpActivityObserver,
-    HttpRequestObserver, NetProgress, Http, NetUtils, NetDebugger, Events,
-    TraceListener, TraceModule) {
+function(ActivableModule, Obj, Firebug, Firefox, Options, Win, Str, Persist,
+    NetHttpActivityObserver, HttpRequestObserver, NetProgress, Http, NetUtils, NetDebugger,
+    Events, Locale, TraceListener, TraceModule) {
 
 // ********************************************************************************************* //
 // Constants
@@ -32,6 +34,7 @@ const Cr = Components.results;
 var panelName = "net";
 
 var startFile = NetProgress.prototype.startFile;
+var openingFile = NetProgress.prototype.openingFile;
 var requestedFile = NetProgress.prototype.requestedFile;
 var respondedFile = NetProgress.prototype.respondedFile;
 var respondedCacheFile = NetProgress.prototype.respondedCacheFile;
@@ -44,11 +47,12 @@ var contentLoad = NetProgress.prototype.contentLoad;
 
 /**
  * @module Represents a module object for the Net panel. This object is derived
- * from <code>Firebug.ActivableModule</code> in order to support activation (enable/disable).
+ * from {@link ActivableModule} in order to support activation (enable/disable).
  * This allows to avoid (performance) expensive features if the functionality is not necessary
  * for the user.
  */
-Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
+Firebug.NetMonitor = Obj.extend(ActivableModule,
+/** @lends Firebug.NetMonitor */
 {
     dispatchName: "netMonitor",
     maxQueueRequests: 500,
@@ -59,7 +63,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
 
     initialize: function()
     {
-        Firebug.ActivableModule.initialize.apply(this, arguments);
+        ActivableModule.initialize.apply(this, arguments);
 
         this.traceNetListener = new TraceListener("net.", "DBG_NET", true);
         this.traceActivityListener = new TraceListener("activityObserver.",
@@ -75,7 +79,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
 
     initializeUI: function()
     {
-        Firebug.ActivableModule.initializeUI.apply(this, arguments);
+        ActivableModule.initializeUI.apply(this, arguments);
 
         // Initialize max limit for logged requests.
         Firebug.NetMonitor.updateMaxLimit();
@@ -83,13 +87,25 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
         // Synchronize UI buttons with the current filter.
         this.syncFilterButtons(Firebug.chrome);
 
+        // Initialize filter button tooltips
+        var doc = Firebug.chrome.window.document;
+        var filterButtons = doc.getElementsByClassName("fbNetFilter");
+        for (var i=0, len=filterButtons.length; i<len; ++i)
+        {
+            if (filterButtons[i].id != "fbNetFilter-all")
+            {
+                filterButtons[i].tooltipText = Locale.$STRF("firebug.labelWithShortcut",
+                    [filterButtons[i].tooltipText, Locale.$STR("tooltip.multipleFiltersHint")]);
+            }
+        }
+
         if (FBTrace.DBG_NET)
             FBTrace.sysout("net.NetMonitor.initializeUI; enabled: " + this.isAlwaysEnabled());
     },
 
     shutdown: function()
     {
-        Firebug.ActivableModule.shutdown.apply(this, arguments);
+        ActivableModule.shutdown.apply(this, arguments);
 
         TraceModule.removeListener(this.traceNetListener);
         TraceModule.removeListener(this.traceActivityListener);
@@ -101,7 +117,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
 
     initContext: function(context, persistedState)
     {
-        Firebug.ActivableModule.initContext.apply(this, arguments);
+        ActivableModule.initContext.apply(this, arguments);
 
         if (FBTrace.DBG_NET)
             FBTrace.sysout("net.initContext for: " + context.getName());
@@ -115,7 +131,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
             {
                 if (context.netProgress)
                     context.netProgress.post(windowPaint, [win, NetUtils.now()]);
-            }
+            };
 
             if (Options.get("netShowPaintEvents"))
             {
@@ -136,7 +152,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
                         context.removeEventListener(win, "MozAfterPaint", onWindowPaintHandler, false);
                     }
                 }, 2000); //xxxHonza: this should be customizable using preferences.
-            }
+            };
             context.addEventListener(win, "load", onWindowLoadHandler, true);
 
             // Register "DOMContentLoaded" listener to track timing.
@@ -145,7 +161,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
                 if (context.netProgress)
                     context.netProgress.post(contentLoad, [win, NetUtils.now()]);
                 context.removeEventListener(win, "DOMContentLoaded", onContentLoadHandler, true);
-            }
+            };
 
             context.addEventListener(win, "DOMContentLoaded", onContentLoadHandler, true);
         }
@@ -164,7 +180,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
 
     showContext: function(browser, context)
     {
-        Firebug.ActivableModule.showContext.apply(this, arguments);
+        ActivableModule.showContext.apply(this, arguments);
 
         if (FBTrace.DBG_NET)
             FBTrace.sysout("net.showContext; " + (context ? context.getName() : "NULL") +
@@ -196,7 +212,7 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
 
     destroyContext: function(context, persistedState)
     {
-        Firebug.ActivableModule.destroyContext.apply(this, arguments);
+        ActivableModule.destroyContext.apply(this, arguments);
 
         if (FBTrace.DBG_NET)
             FBTrace.sysout("net.destroyContext for: " +
@@ -239,8 +255,8 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
         }
         else
         {
-            // If the Net panel is not enabled, we needto make sure the unmonitorContext
-            // is executed and so, the start button (aka firebug status bar icons) is
+            // If the Net panel is not enabled, we need to make sure the unmonitorContext
+            // is executed and so, the start button (aka Firebug status bar icons) is
             // properly updated.
             NetHttpActivityObserver.unregisterObserver();
             Firebug.connection.eachContext(unmonitorContext);
@@ -267,34 +283,69 @@ Firebug.NetMonitor = Obj.extend(Firebug.ActivableModule,
             panel.clear();
     },
 
-    onToggleFilter: function(context, filterCategory)
+    onToggleFilter: function(event, context, filterCategory)
     {
         if (!context.netProgress)
             return;
 
-        Options.set("netFilterCategory", filterCategory);
-
-        // The content filter has been changed. Make sure that the content
-        // of the panel is updated (CSS is used to hide or show individual files).
-        var panel = context.getPanel(panelName, true);
-        if (panel)
+        var filterCategories = [];
+        if (Events.isControl(event) && filterCategory != "all")
         {
-            panel.setFilter(filterCategory);
-            panel.updateSummaries(NetUtils.now(), true);
+            filterCategories = Options.get("netFilterCategories").split(" ");
+            var filterCategoryIndex = filterCategories.indexOf(filterCategory);
+            if (filterCategoryIndex == -1)
+                filterCategories.push(filterCategory);
+            else
+                filterCategories.splice(filterCategoryIndex, 1);
         }
+        else
+        {
+            filterCategories.push(filterCategory);
+        }
+
+        // Remove "all" filter in case several filters are selected
+        if (filterCategories.length > 1)
+        {
+            var allIndex = filterCategories.indexOf("all");
+            if (allIndex != -1)
+                filterCategories.splice(allIndex, 1);
+        }
+
+        // If no filter categories are selected, use the default
+        if (filterCategories.length == 0)
+            filterCategories = Options.getDefault("netFilterCategories").split(" ");
+
+        Options.set("netFilterCategories", filterCategories.join(" "));
+
+        this.syncFilterButtons(Firebug.chrome);
+
+        Events.dispatch(Firebug.NetMonitor.fbListeners, "onFiltersSet", [filterCategories]);
     },
 
     syncFilterButtons: function(chrome)
     {
-        var button = chrome.$("fbNetFilter-" + Firebug.netFilterCategory);
-        button.checked = true;
+        var filterCategories = new Set();
+        Options.get("netFilterCategories").split(" ").forEach(function(element)
+        {
+            filterCategories.add(element);
+        });
+        var doc = chrome.window.document;
+        var buttons = doc.getElementsByClassName("fbNetFilter");
+
+        for (var i=0, len=buttons.length; i<len; ++i)
+        {
+            var filterCategory = buttons[i].id.substr(buttons[i].id.search("-") + 1);
+            buttons[i].checked = filterCategories.has(filterCategory);
+        }
     },
 
     togglePersist: function(context)
     {
         var panel = context.getPanel(panelName);
         panel.persistContent = panel.persistContent ? false : true;
-        Firebug.chrome.setGlobalAttribute("cmd_togglePersistNet", "checked", panel.persistContent);
+
+        Firebug.chrome.setGlobalAttribute("cmd_firebug_togglePersistNet", "checked",
+            panel.persistContent);
     },
 
     updateOption: function(name, value)
@@ -399,6 +450,8 @@ var NetHttpObserver =
                 this.onExamineResponse(subject, win, tabId, context);
             else if (topic == "http-on-examine-cached-response")
                 this.onExamineCachedResponse(subject, win, tabId, context);
+            else if (topic == "http-on-opening-request")
+                this.openingFile(subject, win, tabId, context);
         }
         catch (err)
         {
@@ -413,10 +466,19 @@ var NetHttpObserver =
         var origName = request.originalURI.asciiSpec;
         var isRedirect = (name != origName);
 
+        // If the current context is associated with about:blank, just use it.
+        // It's because every opened tab is about:blank first and than changed
+        // to the target URL. So, the initContext goes for about:blank and not
+        // second time for the real URL. We don't want to crate temporary context
+        // and then never use it because initContext isn't fired.
+        // This is related to firebug/4040 test and also issue 5916
+        // See also {@link TabWatcher.doLocationChange}
+        var currContextName = context ? context.getName() : "";
+
         // We only need to create a new context if this is a top document uri (not frames).
         if ((request.loadFlags & Ci.nsIChannel.LOAD_DOCUMENT_URI) &&
             request.loadGroup && request.loadGroup.groupObserver &&
-            win == win.parent && !isRedirect)
+            win == win.parent && !isRedirect && currContextName != "about:blank")
         {
             var browser = Firefox.getBrowserForWindow(win);
 
@@ -433,14 +495,14 @@ var NetHttpObserver =
             {
                 Firebug.NetMonitor.contexts[tabId] = createNetProgress(null);
 
-                // OK, we definitelly want to watch this page load, temp context is created
+                // OK, we definitely want to watch this page load, temporary context is created
                 // so, make sure the activity-observer is registered and we have detailed
                 // timing info for this first document request.
                 NetHttpActivityObserver.registerObserver();
 
                 if (FBTrace.DBG_NET)
                     FBTrace.sysout("net.onModifyRequest; Temp Context created (" +
-                        getTempContextCount() + "), " + tabId);
+                        getTempContextCount() + "), " + tabId + ", " + context.getName());
             }
         }
 
@@ -455,8 +517,7 @@ var NetHttpObserver =
             // We need to track the request now since the activity observer is not used in case
             // the response comes from BF cache. If it's a regular HTTP request the timing
             // is properly overridden by the activity observer (ACTIVITY_SUBTYPE_REQUEST_HEADER).
-            // Even if the Firebug.netShowBFCacheResponses is false now, the user could
-            // switch it on later.
+            // Even if 'netShowBFCacheResponses' is false now, the user could switch it on later.
             var xhr = Http.isXHR(request);
             networkContext.post(requestedFile, [request, NetUtils.now(), win, xhr]);
         }
@@ -517,6 +578,18 @@ var NetHttpObserver =
         networkContext.post(respondedCacheFile, [request, NetUtils.now(), info]);
     },
 
+    openingFile: function(request, win, tabId, context)
+    {
+        var networkContext = Firebug.NetMonitor.contexts[tabId];
+        if (!networkContext)
+            networkContext = context ? context.netProgress : null;
+
+        if (!networkContext)
+            return;
+
+        networkContext.post(openingFile, [request, win]);
+    },
+
     /* nsISupports */
     QueryInterface: function(iid)
     {
@@ -527,7 +600,7 @@ var NetHttpObserver =
 
         throw Cr.NS_ERROR_NO_INTERFACE;
     }
-}
+};
 
 // ********************************************************************************************* //
 // Monitoring start/stop
@@ -562,8 +635,10 @@ function monitorContext(context)
     else
     {
         if (FBTrace.DBG_NET)
+        {
             FBTrace.sysout("net.monitorContext; create network monitor context object for: " +
                 tabId);
+        }
 
         networkContext = createNetProgress(context);
     }
@@ -615,7 +690,7 @@ function unmonitorContext(context)
 
     updateStartButton(false);
 
-    // And finaly destroy the net panel sub context.
+    // And finally destroy the net panel sub context.
     delete context.netProgress;
 }
 
@@ -651,7 +726,7 @@ function createNetProgress(context)
 // TabCache Listener
 
 /**
- * TabCache listner implementation. Net panel uses this listner to remember all
+ * TabCache listener implementation. Net panel uses this listener to remember all
  * responses stored into the cache. There can be more requests to the same URL that
  * returns different responses. The Net panels must remember all of them (tab cache
  * remembers only the last one)
@@ -700,12 +775,12 @@ NetCacheListener.prototype =
     {
         // Remember the response for this request.
         var file = this.netProgress.getRequestFile(request, null, true);
-        if (file)
+        if (file && responseText)
             file.responseText = responseText;
 
         Events.dispatch(Firebug.NetMonitor.fbListeners, "onResponseBody", [context, file]);
     }
-}
+};
 
 // ********************************************************************************************* //
 // Debugger Listener

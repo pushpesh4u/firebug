@@ -3,21 +3,24 @@
 define([
     "firebug/firebug",
     "firebug/lib/events",
+    "firebug/lib/options",
 ],
-function(Firebug, Events) {
+function(Firebug, Events, Options) {
 
 // ********************************************************************************************* //
 // Reusable code for modules that support editing
 
 Firebug.EditorSelector =
 {
+    editors: {},
+
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
     // Override for each module
     getEditorOptionKey: function()
     {
         return "cssEditMode";
     },
-
-    editors: {},
 
     registerEditor: function(name, editor)
     {
@@ -48,13 +51,13 @@ Firebug.EditorSelector =
     setCurrentEditorName: function(name)
     {
         this.currentEditorName = name;
-        Firebug.Options.set(this.getEditorOptionKey(), name);
+        Options.set(this.getEditorOptionKey(), name);
     },
 
     getCurrentEditorName: function()
     {
         if (!this.currentEditorName)
-            this.currentEditorName = Firebug.Options.get(this.getEditorOptionKey());
+            this.currentEditorName = Options.get(this.getEditorOptionKey());
 
         return this.currentEditorName;
     },
@@ -81,9 +84,8 @@ Firebug.EditorSelector =
         if (!mode)
             return;
 
-        var menuitem = Firebug.chrome.$("menu_" + this.getEditorOptionKey() + mode);
-
-        var command = Firebug.chrome.$("cmd_toggle"+this.getEditorOptionKey());
+        var menuitem = Firebug.chrome.$("menu_firebug_" + this.getEditorOptionKey() + mode);
+        var command = Firebug.chrome.$("cmd_firebug_toggle" + this.getEditorOptionKey());
         command.setAttribute("label", menuitem.label);
         command.setAttribute("tooltiptext", menuitem.tooltipText);
     },
@@ -98,7 +100,7 @@ Firebug.EditorSelector =
         {
             if (child.localName == "menuitem")
             {
-                if (child.id == "menu_"+this.getEditorOptionKey()+mode)
+                if (child.id == "menu_firebug_" + this.getEditorOptionKey()+mode)
                     child.setAttribute("checked", true);
                 else
                     child.removeAttribute("checked");

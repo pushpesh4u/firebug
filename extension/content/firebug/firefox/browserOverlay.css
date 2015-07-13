@@ -4,33 +4,42 @@
 /* Customizable Dialog Toolbar Buttons */
 
 /* Inspector button */
-#inspector-button {
-    list-style-image: url(chrome://firebug/skin/inspect.png);
+#firebug-inspectorButton {
+    list-style-image: url(chrome://firebug/skin/inspect.svg);
+}
+
+#firebug-inspectorButton:hover {
+    filter: url(resource://firebugui/filters.svg#darken);
+}
+
+#firebug-inspectorButton:active {
+    filter: url(resource://firebugui/filters.svg#deepDarken);
 }
 
 /* Firebug Start Button */
 #firebug-button {
     -moz-binding: url("chrome://firebug/content/firefox/start-button/startButton.xml#start-button");
-    list-style-image: url(chrome://firebug/skin/firebug-gray-16.png);
+    list-style-image: url(chrome://firebug/skin/firebugSmall.svg) !important;
+    filter: url(resource://firebugui/filters.svg#grayscale);
 }
 
-#firebug-button[firebugActive="true"] .toolbarbutton-icon {
-    list-style-image: url(chrome://firebug/skin/firebug16.png)!important;
+#firebug-button[firebugActive="true"] {
+    filter: none;
 }
 
 /* Error badge (displays an error counter). The badge is only visible if error count
    should be displayed */
-#firebug-button .badge {
+#firebug-error-badge {
     display: none;
-}
-
-#firebug-button[showErrors="true"] .badge {
-    display: block;
-    -moz-box-sizing: border-box;
     margin: 0;
 }
 
-#firebug-button .badge > .label {
+#firebug-error-badge[showErrors="true"] {
+    display: block;
+    -moz-box-sizing: border-box;
+}
+
+#firebug-error-label {
     -moz-box-sizing: border-box;
     visibility: hidden;
     font-size: 10px;
@@ -42,8 +51,8 @@
     border-radius: 3px;
     background-color: rgba(255, 0, 0, 0.9);
     box-shadow: inset 0px 0px 1px white;
-    background-image: -moz-linear-gradient(
-        center bottom,
+    background-image: linear-gradient(
+        to top,
         #DBE1EB 0%,
         #DEE4EB 80%,
         #E7EBF3 81%
@@ -56,7 +65,7 @@
                 0 0 3px rgba(153, 0, 0, 0.9);
 }
 
-#firebug-button[showErrors="true"]:not([errorCount="0"]) .badge .label {
+#firebug-error-badge[showErrors="true"] > #firebug-error-label:not([errorCount="0"]) {
     visibility: visible;
 }
 
@@ -64,24 +73,25 @@
 #addon-bar #firebug-button dropmarker {
     display: none;
 }
-#addon-bar #firebug-button .fb-toolbarbutton{
-    padding: 0 3px!important;
+
+#addon-bar #firebug-button .fb-toolbarbutton {
+    padding: 0 3px !important;
 }
 
 /* Slightly different positions of the badge for individual toolbars */
-#nav-bar #firebug-button .badge {
+#nav-bar #firebug-error-badge {
     margin: 3px -10px 0 -8px;
 }
 
-#addon-bar #firebug-button .badge {
+#addon-bar #firebug-error-badge {
     margin-top: 1px;
 }
 
-#TabsToolbar #firebug-button .badge {
+#TabsToolbar #firebug-error-badge {
     margin-top: 4px;
 }
 
-#toolbar-menubar #firebug-button .badge {
+#toolbar-menubar #firebug-error-badge {
     margin-top: 4px;
 }
 
@@ -89,47 +99,31 @@
     padding: 0;
 }
 
-/*************************************************************************************************/
-/* Firebug Status Icon */
-
-#fbStatusBar {
-    min-width: 26px;
-    cursor: pointer;
-}
-
-#fbStatusText {
-    cursor: pointer;
-    color: red;
-    font-weight: bold;
-}
-
-#fbStatusBar[showErrors] #fbStatusIcon {
-    list-style-image: url(chrome://firebug/skin/errorIcon.png);
-}
-
-#fbStatusIcon {
-    list-style-image: url(chrome://firebug/skin/firebug-gray-16.png);
-}
-
-#fbStatusIcon[firebugActive="true"] {
-    list-style-image: url(chrome://firebug/skin/firebug16.png);
+/* See issue 7444 */
+#firebug-button .badge {
+    display: none;
+    margin: 0;
 }
 
 /*************************************************************************************************/
 /* Firebug Menu & Firefox context menu */
 
-#menu_firebug, #appmenu_firebug, #menu_webDeveloper_firebug {
-    list-style-image: url(chrome://firebug/skin/firebug16.png);
+#menu_firebug,
+#appmenu_firebug,
+#menu_webDeveloper_firebug {
+    list-style-image: url(chrome://firebug/skin/firebugSmall.svg);
 }
 
-#menu_firebugInspect {
-    list-style-image: url(chrome://firebug/skin/Templarian_inspector.png);
-    -moz-image-region: rect(0, 16px, 16px, 0);
+#menu_firebug_firebugInspect {
+    list-style-image: url(chrome://firebug/skin/inspect.svg);
 }
 
-#menu_firebugInspect:hover,
-#menu_firebugInspect:active {
-    -moz-image-region: rect(16px, 16px, 32px, 0);
+#menu_firebug_firebugInspect:hover {
+    filter: url(resource://firebugui/filters.svg#darken);
+}
+
+#menu_firebug_firebugInspect:active {
+    filter: url(resource://firebugui/filters.svg#deepDarken);
 }
 
 /*************************************************************************************************/
@@ -138,32 +132,117 @@
 #fbMainFrame {
     height: 270px;
     width: 370px;
+    min-height: 30px;
+    min-width: 30px;
 }
 
 /*************************************************************************************************/
 /* Firebug Splitter */
 
 #fbContentSplitter{
-    border-color: threedShadow !important;
-    background-color: #FFFFFF;
+    border-color: none;
+    background-color: rgb(221,221,221);
+    /*background-color: rgb(210, 224, 237); Australis*/
+    border: none;
 }
 
 #fbContentSplitter[dir=reverse]{
-    -moz-transform: scale(-1, -1);
+    transform: scale(-1, -1);
 }
 
 #fbContentSplitter[orient=vertical] {
-    border-top: 1px solid !important;
-    border-bottom: none;
     min-height: 5px;
     max-height: 5px;
-    background-color: -moz-dialog;
+    /*background-color: -moz-dialog;*/
 }
 
 #fbContentSplitter[orient=horizontal] {
-    border-right: 1px solid !important;
-    border-left: none;
     min-width: 5px;
     max-width: 5px;
-    background-color: -moz-dialog;
+    /*background-color: -moz-dialog;*/
+}
+
+/*************************************************************************************************/
+/* Start Button Tooltip */
+
+.firebugButtonTooltip .version {
+    font-weight: bold;
+}
+
+.firebugButtonTooltip .alwaysOn {
+    color: gray;
+}
+
+.firebugButtonTooltip .enablement {
+    border-top: 1px gray dotted;
+    margin-top: 5px;
+    padding-top: 5px;
+    font-style: italic;
+}
+
+.firebugButtonTooltip .panelName,
+.firebugButtonTooltip .panelStatus {
+    color: gray;
+    margin-top: 0;
+    margin-bottom: 0;
+    min-width: 75px
+}
+
+.firebugButtonTooltip .panelStatus.on,
+.firebugButtonTooltip .panelName.on {
+    color: black;
+}
+
+/*************************************************************************************************/
+/* Start Button - Multiprocess Notification Panel */
+
+fbMultiprocessNotificationPanel {
+    -moz-binding: url("chrome://firebug/content/firefox/multiprocessNotificationPanel.xml#panel");
+}
+
+fbAuroraNotificationPanel {
+    -moz-binding: url("chrome://firebug/content/firefox/auroraNotificationPanel.xml#panel");
+}
+
+fbUpgradeNotificationPanel {
+    -moz-binding: url("chrome://firebug/content/firefox/upgradeFirebugPanel.xml#panel");
+}
+
+fbUpgradeNotificationPanel .iconbox,
+fbAuroraNotificationPanel .iconbox,
+fbMultiprocessNotificationPanel .iconbox {
+    padding-right: 10px;
+}
+
+fbUpgradeNotificationPanel .desc,
+fbAuroraNotificationPanel .desc,
+fbMultiprocessNotificationPanel .desc {
+    max-width: 300px;
+}
+
+fbUpgradeNotificationPanel .title {
+    font-weight: bold;
+    font-size: 16px;
+}
+
+fbMultiprocessNotificationPanel .warn {
+    max-width: 275px;
+}
+
+fbMultiprocessNotificationPanel .warn {
+    color: gray;
+}
+
+fbMultiprocessNotificationPanel .warningbox {
+    margin-top: 15px;
+}
+
+fbMultiprocessNotificationPanel .warningicon {
+    margin-right: 4px;
+}
+
+fbUpgradeNotificationPanel .progress,
+fbAuroraNotificationPanel .progress,
+fbMultiprocessNotificationPanel .progress {
+    margin: 8px;
 }

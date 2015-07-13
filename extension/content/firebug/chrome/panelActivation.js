@@ -1,51 +1,63 @@
 /* See license.txt for terms of usage */
 
 define([
-    "firebug/lib/object",
     "firebug/firebug",
-    "firebug/chrome/firefox",
+    "firebug/lib/trace",
+    "firebug/lib/object",
     "firebug/lib/locale",
     "firebug/lib/domplate",
-    "firebug/lib/url",
     "firebug/lib/dom",
-    "firebug/js/fbs",   // bug712289
+    "firebug/lib/options",
+    "firebug/chrome/module",
+    "firebug/chrome/rep",
 ],
-function(Obj, Firebug, Firefox, Locale, Domplate, Url, Dom, FBS) {
+function(Firebug, FBTrace, Obj, Locale, Domplate, Dom, Options, Module, Rep) {
 
-// ************************************************************************************************
+"use strict";
+
+// ********************************************************************************************* //
 // Constants
 
-const Cc = Components.classes;
-const Ci = Components.interfaces;
+var Cc = Components.classes;
+var Ci = Components.interfaces;
 
-const prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch2);
+var prefs = Cc["@mozilla.org/preferences-service;1"].getService(Ci.nsIPrefBranch);
+var prompts = Cc["@mozilla.org/embedcomp/prompt-service;1"].getService(Ci.nsIPromptService);
 
+var {domplate, DIV, H1, SPAN, P, A} = Domplate;
+
+var Trace = FBTrace.to("DBG_ACTIVATION");
+var TraceError = FBTrace.toError();
+
+// ********************************************************************************************* //
+// Panel Activation Implementation
 
 /**
  * @module Implements Panel activation logic. A Firebug panel can support activation in order
  * to avoid performance penalties in cases when panel's features are not necessary at the moment.
- * Such panel must be derived from {@link Firebug.ActivablePanel} and appropriate activable
- * module from {@link Firebug.ActivableModule}
+ * Such panel must be derived from {@link ActivablePanel} and appropriate activable
+ * module from {@link ActivableModule}
  */
-Firebug.PanelActivation = Obj.extend(Firebug.Module,
+Firebug.PanelActivation = Obj.extend(Module,
 /** @lends Firebug.PanelActivation */
 {
     dispatchName: "panelActivation",
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+    // Initialization
 
     initialize: function()
     {
-        prefs.addObserver(Firebug.Options.getPrefDomain(), this, false);
+        prefs.addObserver(Options.getPrefDomain(), this, false);
         Firebug.connection.addListener(this);
     },
 
     initializeUI: function()
     {
-        // The "off" option is removed so make sure to convert previsous prev value
+        // The "off" option is removed so make sure to convert previous value
         // into "none" if necessary.
-        if (Firebug.allPagesActivation == "off")
-            Firebug.allPagesActivation = "none";
+        if (Options.get("allPagesActivation") === "off")
+            Options.set("allPagesActivation", "none");
 
         // Update option menu item.
         this.updateAllPagesActivation();
@@ -53,25 +65,30 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     shutdown: function()
     {
-        prefs.removeObserver(Firebug.Options.getPrefDomain(), this, false);
+        prefs.removeObserver(Options.getPrefDomain(), this, false);
         Firebug.connection.removeListener(this);
     },
 
+    // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
+
     showPanel: function(browser, panel)
     {
-        if (FBTrace.DBG_ACTIVATION)
-            FBTrace.sysout("PanelActivation.showPanel; " + (panel ? panel.name : "null panel"));
+        Trace.sysout("panelActivation.showPanel; " + (panel ? panel.name : "null panel"));
 
-        // Panel toolbar is not displayed for disabled panels.
-        var chrome = Firebug.chrome;
-        Dom.collapse(chrome.$("fbToolbar"), !panel);
+        // Panel toolbar is not displayed for disabled panels. Also make sure to collapse
+        // the 'fbToolbox', so there is no line below the panel tab.
+        Dom.collapse(Firebug.chrome.$("fbToolbox"), !panel);
+
+	// Search box is not displayed for disabled panels. Collapse the element.
+	var searchBox = Firebug.chrome.$("fbSearchBox");
+	Dom.collapse(searchBox, !panel);
     },
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
 
     activatePanelTypes: function(panelTypes)
     {
-        for (var i=0; i<panelTypes.length; i++)
+        for (var i = 0; i < panelTypes.length; i++)
         {
             var panelType = panelTypes[i];
             if (!this.isPanelActivable(panelType))
@@ -84,7 +101,7 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     deactivatePanelTypes: function(panelTypes)
     {
-        for (var i=0; i<panelTypes.length; i++)
+        for (var i = 0; i < panelTypes.length; i++)
         {
             var panelType = panelTypes[i];
             if (!this.isPanelActivable(panelType))
@@ -104,12 +121,18 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     isPanelEnabled: function(panelType)
     {
+        if (typeof panelType == "string")
+            panelType = Firebug.getPanelType(panelType);
+
+        if (!panelType)
+            return false;
+
         if (!this.isPanelActivable(panelType))
             return true;
 
         // Panel "class" object is used to decide whether a panel is disabled
-        // or not (i.e.: isEnabled is a static method of Firebug.Panel)
-        return panelType ? panelType.prototype.isEnabled() : false;
+        // or not (i.e.: isEnabled is a static method of Panel)
+        return panelType.prototype.isEnabled();
     },
 
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
@@ -127,7 +150,7 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     enableAllPanels: function()
     {
-        for (var i = 0; i < Firebug.panelTypes.length; ++i)
+        for (var i = 0; i < Firebug.panelTypes.length; i++)
         {
             var panelType = Firebug.panelTypes[i];
             this.setPanelState(panelType, true);
@@ -136,7 +159,7 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     disableAllPanels: function()
     {
-        for (var i = 0; i < Firebug.panelTypes.length; ++i)
+        for (var i = 0; i < Firebug.panelTypes.length; i++)
         {
             var panelType = Firebug.panelTypes[i];
             this.setPanelState(panelType, false);
@@ -179,16 +202,16 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
         try
         {
             var panelName = parts[2];
-            var enable = Firebug.Options.get(panelName + ".enableSites");
-
-            var panelType = Firebug.getPanelType(panelName, enable);
+            var panelType = Firebug.getPanelType(panelName);
             if (panelType)
+            {
+                var enable = Options.get(panelName + ".enableSites");
                 this.onActivationChanged(panelType, enable);
+            }
         }
         catch (e)
         {
-            if (FBTrace.DBG_ACTIVATION || FBTrace.DBG_ERRORS)
-                FBTrace.sysout("PanelActivation.observe; EXCEPTION " + e, e);
+            TraceError.sysout("panelActivation.observe; EXCEPTION " + e, e);
         }
     },
 
@@ -198,13 +221,18 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
         {
             // Iterate all contexts and destroy all instances of the specified panel.
             var self = this;
-            Firebug.connection.eachContext(function(context) {
+            Firebug.connection.eachContext(function(context)
+            {
                 context.destroyPanel(panelType, context.persistedState);
             });
         }
 
+        // xxxHonza: does this really need to be a class method call?
         panelType.prototype.onActivationChanged(enable);
 
+        this.dispatch("activationChanged", [panelType, enable]);
+
+        Firebug.chrome.$("fbPanelBar1").updateTab(panelType);
         Firebug.chrome.syncPanel();
     },
 
@@ -217,30 +245,57 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
     // * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * //
     // UI commands
 
-    clearAnnotations: function()
+    clearAnnotations: function(force)
     {
+        // If 'force' is set to true, ignore preference and skip the confirmation dialog.
+        // Note that the argument is used by automated tests.
+        var skipConfirmation = (typeof(force) == "boolean" && force === true);
+        if (skipConfirmation)
+        {
+            Firebug.connection.clearAnnotations();
+            return;
+        }
+
+        // Show the confirmation dialog only if the preference/user says so.
+        var clearConfirmationPref = "clearAnnotationsConfirmation";
+        if (Options.get(clearConfirmationPref))
+        {
+            var check = {value: false};
+            var flags = prompts.BUTTON_POS_0 * prompts.BUTTON_TITLE_YES +
+            prompts.BUTTON_POS_1 * prompts.BUTTON_TITLE_NO;
+
+            if (!prompts.confirmEx(Firebug.chrome.window, Locale.$STR("Firebug"),
+                Locale.$STR("annotations.confirm.clear"), flags, "", "", "",
+                Locale.$STR("Do_not_show_this_message_again"), check) == 0)
+            {
+                return;
+            }
+
+            Options.set(clearConfirmationPref, !check.value);
+        }
+
         Firebug.connection.clearAnnotations();
     },
 
     toggleAll: function(state)
     {
-        if (FBTrace.DBG_ACTIVATION)
-            FBTrace.sysout("Firebug.toggleAll("+state+") with allPagesActivation: " +
-                Firebug.allPagesActivation);
+        var allPagesActivation = Options.get("allPagesActivation");
+        Trace.sysout("panelActivation.toggleAll; state: " + state + " with allPagesActivation: " +
+            allPagesActivation);
 
         if (state == "on")
         {
-            if (Firebug.allPagesActivation == state) // then we were armed
-                Firebug.allPagesActivation = "none";
+            // Check if Firebug is enabled
+            if (allPagesActivation === state)
+                Options.set("allPagesActivation", "none");
             else
                 this.allOn();
         }
         else
         {
-            Firebug.allPagesActivation = "none";
+            Options.set("allPagesActivation", "none");
         }
 
-        Firebug.Options.set("allPagesActivation", Firebug.allPagesActivation);
         this.updateAllPagesActivation();
     },
 
@@ -253,7 +308,7 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
     updateAllPagesActivation: function()
     {
         // don't show Off button if we are always on
-        var allOn = Firebug.allPagesActivation == "on";
+        var allOn = Options.get("allPagesActivation") === "on";
         Firebug.chrome.disableOff(allOn);
 
         Firebug.StartButton.resetTooltip();
@@ -261,18 +316,21 @@ Firebug.PanelActivation = Obj.extend(Firebug.Module,
 
     allOn: function()
     {
-        Firebug.allPagesActivation = "on";  // In future we always create contexts,
-        Firebug.toggleBar(true);  // and we turn on for the current page
+        // In future always create contexts
+        Options.set("allPagesActivation", "on");
+
+        // Turn Firebug on for the current page
+        Firebug.toggleBar(true);
     }
 });
 
-// ************************************************************************************************
+// ********************************************************************************************* //
+// Disabled Panel Box
 
 /**
  * @domplate This template renders default content for disabled panels.
  */
-with (Domplate) {
-Firebug.DisabledPanelBox = domplate(Firebug.Rep,
+Firebug.DisabledPanelBox = domplate(Rep,
 /** @lends Firebug.DisabledPanelBox */
 {
     tag:
@@ -305,9 +363,11 @@ Firebug.DisabledPanelBox = domplate(Firebug.Rep,
         }
         else
         {
-            if (FBTrace.DBG_ERRORS)
-                FBTrace.sysout("panelActivation.onEnable; panel is not activable: " +
+            if (TraceError.active)
+            {
+                TraceError.sysout("panelActivation.onEnable; panel is not activable: " +
                     Firebug.getPanelTitle(panelType));
+            }
         }
     },
 
@@ -331,15 +391,9 @@ Firebug.DisabledPanelBox = domplate(Firebug.Rep,
         this.tag.replace(args, parentNode, this);
         parentNode.removeAttribute("collapsed");
 
-        // bug712289
-        if (panelName == "script" && !FBS.isJSDAvailable())
-        {
-            Dom.hide(parentNode.querySelector(".descImage"), true);
-            Dom.hide(parentNode.querySelector(".objectLink"), true);
-
-            var desc = parentNode.querySelector(".disabledPanelDescription");
-            desc.innerHTML = Locale.$STR("moduleManager.scriptPanelNotAvailable");
-        }
+        // Dispatch an event to UI listeners, so the box can be customized.
+        Firebug.dispatch(Firebug.uiListeners, "showDisabledPanelBox",
+            [panelName, parentNode]);
     },
 
     /**
@@ -363,14 +417,14 @@ Firebug.DisabledPanelBox = domplate(Firebug.Rep,
         var doc = browser.contentDocument;
         return doc.documentElement.querySelector(".disabledPanelNode");
     },
-})};
+});
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 // Registration
 
 Firebug.registerModule(Firebug.PanelActivation);
 
 return Firebug.PanelActivation;
 
-// ************************************************************************************************
+// ********************************************************************************************* //
 });
